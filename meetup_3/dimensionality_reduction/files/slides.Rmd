@@ -1,0 +1,3175 @@
+---
+title: "Dimensionality Reduction"
+author: ioan.moldovan@tora.com
+date: PyData Cluj-Napoca meetup 3, 2019.05.07
+output:
+  ioslides_presentation: 
+    widescreen: true
+    self_contained: yes
+    smaller: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(out.height="70%",out.width="100%", dev.args=list(bg='transparent'))
+```
+
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,eval=FALSE}
+
+#Run in console to install packages
+
+libs = c("dplyr", "quantmod", "ggfortify", "kernlab", "ggplot2", "gganimate", "ggforce", "gifski", "gridExtra", "elasticnet", "multiDimBio", "reshape2", "imager", "ica", "LS2Wstat", "MASS", "dimRed", "vegan", "lle", "tsne", "magick", "h2o", "keras", "scatterplot3d", "plot3D", "RColorBrewer", "animation", "fastICA", "factoextra", "dslabs", "rpart", "rattle", "caret", "Rdimtools", "NeuralNetTools", "umap", "rgl", "lubridate", "maps", "ggExtra", "dml", "ggpubr", "rerf", "elasticnet", "broman", "ggcorrplot", "mlbench", "KODAMA", "dbscan", "kohonen", "GGally", "raster", "Rfast", "rmgarch")
+for (l in libs) { if (!require(l)) { install.packages(l) } }
+
+devtools::install_github("coolbutuseless/threed")
+
+```
+
+
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+library(knitr)
+library(rgl)
+library(ggplot2)
+
+knit_hooks$set(webgl=hook_webgl)
+
+theme_l <- function(base_size = 11, base_family = "", base_line_size = base_size/22, base_rect_size = base_size/22)  {
+    half_line <- base_size/2
+    theme_bw(base_size = base_size, base_family = base_family, 
+        base_line_size = base_line_size, base_rect_size = base_rect_size) %+replace% 
+        theme(axis.line = element_line(colour = "black", size = rel(1)), 
+            strip.background = element_rect(fill = "transparent", colour = "grey70", size = rel(2)),
+            panel.background = element_rect(fill = "transparent", colour = NA), 
+            panel.border = element_rect(fill = NA, colour = "grey70", size = rel(1)), panel.grid = element_line(colour = "grey87"), 
+            plot.background = element_rect(fill = "transparent", colour = NA),
+            legend.background = element_rect(fill = "transparent", colour = NA),
+            legend.box.background = element_rect(fill = "transparent", colour = NA),
+            panel.grid.major = element_line(size = rel(0.5)), 
+            panel.grid.minor = element_line(size = rel(0.25)), 
+            axis.ticks = element_line(colour = "grey70", size = rel(0.5)), 
+            legend.key = element_rect(fill = "transparent", colour = NA), 
+            strip.text = element_text(colour = "transparent", size = rel(0.8), margin = margin(0.8 * half_line, 
+                  0.8 * half_line, 0.8 * half_line, 0.8 * half_line)), 
+            complete = TRUE)
+}
+```
+
+<style>
+slide.backdrop {
+  background: none !important;
+  background-color: white !important;
+}
+
+div.footnotes {
+  position: absolute;
+  bottom: 0;
+  margin-bottom: 10px;
+  width: 80%;
+  font-size: 0.5em;
+}
+
+div.smaller {
+  font-size: 0.8em !important;
+}
+
+div.smallest {
+  font-size: 0.6em !important;
+}
+
+</style>
+
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.1.1/jquery.min.js"></script>
+<script>
+$(document).ready(function() {
+  $('slide:not(.backdrop):not(.title-slide)').append('<div class=\"footnotes\">');
+
+  $('footnote').each(function(index) {
+    var text  = $(this).html();
+    var fnNum = (index+1).toString();
+    $(this).html(fnNum.sup());
+
+    var footnote   = fnNum + '. ' + text + '<br/>';
+    var oldContent = $(this).parents('slide').children('div.footnotes').html();
+    var newContent = oldContent + footnote;
+    $(this).parents('slide').children('div.footnotes').html(newContent);
+  });
+  
+  $('smaller').each(function(index) {
+    var text  = $(this).html();
+    $(this).html("<div class='smaller'>" + text +"</div>");
+  });
+  
+  $('smallest').each(function(index) {
+    var text  = $(this).html();
+    $(this).html("<div class='smallest'>" + text +"</div>");
+  });
+
+});
+</script>
+
+
+## What is dimensionality reduction
+
+<div class="notes"><smallest>
+- a loose definition <br>
+- the lower dimensionality representation is sometimes called the latent space and it can differ depending on the algorithm and targeted outcomes <br>
+- in the given example we have shapes, color, transparency level, orientation. Some attributes are irrelevant, maybe we need to count by shapes, or maybe the color matters <br>
+- or maybe both, as together they can be seen as generating factors. We can reconstruct the original data having "external knowledge" about how it should look like, since we know to draw a corresponding 3D shape with a certain orientation etc. <br>
+- one difference between standard dimensionality reduction algorithms and autoencoders: AEs are models that can embed a lot of knowledge <br>
+- book example: an encoder could transform a page of text from a book to a single feature, the page number, which is easily decoded if someone else has the same book <br>
+- multiple ways of doing dimensionality reduction, from projecting points from an euclidean space to a plane, to the quest of extracting complex generative factors, like in the case of variational autoencoders
+</smallest></div>
+
+Retaining relevant data from a [large] set of features, 
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,fig.height=1}
+library(ggplot2)
+library(gridExtra)
+library(RColorBrewer)
+library(dplyr)
+library(threed)
+
+generate_data <- FALSE
+
+camera_to_world <- threed::look_at_matrix(eye=c(-4, 3, 3), at=c(0, 0, 0))
+
+x  <- c(1, 2, 3, 4, 5)
+y <- c(0, 0, 0, 0, 0)
+#colors <- rainbow(5)
+colors <- brewer.pal(n=5, name="Spectral")
+
+o1 <- threed::mesh3dobj$sphere %>% transform_by(invert_matrix(camera_to_world)) %>% perspective_projection()
+o2 <- threed::mesh3dobj$cube %>% transform_by(invert_matrix(camera_to_world)) %>% perspective_projection()
+o3 <- threed::mesh3dobj$tetrahedron %>% transform_by(invert_matrix(camera_to_world)) %>% perspective_projection()
+
+t <- theme(legend.position='none', axis.text=element_blank(), panel.grid.major=element_blank(), panel.grid.minor=element_blank(), panel.border=element_blank(), axis.line=element_blank(), axis.ticks=element_blank())
+
+p1 <- ggplot(o1) + geom_polygon(aes(x=x, y=y, group=zorder), fill=colors[1], colour="grey20", size=0.2, alpha=.75) +
+  theme_l() + t + coord_equal() + xlab("") + ylab("")
+
+p2 <- ggplot(o2) + geom_polygon(aes(x=x, y=y, group=zorder), fill=colors[2], colour="grey20", size=0.2, alpha=.75) +
+  theme_l() + t + coord_equal() + xlab("") + ylab("")
+
+p3 <- ggplot(o3) + geom_polygon(aes(x=x, y=y, group=zorder), fill=colors[3], colour="grey20", size=0.2, alpha=.75) +
+  theme_l() + t + coord_equal() + xlab("") + ylab("")
+
+p4 <- ggplot(o1) + geom_polygon(aes(x=x, y=y, group=zorder), fill=colors[4], colour="grey20", size=0.2, alpha=.75) +
+  theme_l() + t + coord_equal() + xlab("") + ylab("")
+
+p5 <- ggplot(o2) + geom_polygon(aes(x=x, y=y, group=zorder), fill=colors[5], colour="grey20", size=0.2, alpha=.75) +
+  theme_l() + t + coord_equal() + xlab("") + ylab("")
+
+grid.arrange(p1, p2, p3, p4, p5, ncol=5)
+
+if (generate_data) {
+  o4 <- threed::mesh3dobj$octahedron %>% transform_by(invert_matrix(camera_to_world)) %>% perspective_projection()
+  o5 <- threed::mesh3dobj$dodecahedron %>% transform_by(invert_matrix(camera_to_world)) %>% perspective_projection()
+  o6 <- threed::mesh3dobj$icosahedron %>% transform_by(invert_matrix(camera_to_world)) %>% perspective_projection()
+  
+  #run in console to generate data for py
+  dir.create('outputs/fact/', showWarnings=F)
+  colors <- rainbow(50)
+  for (i in seq(length(colors))) {
+    png(paste('outputs/fact/s', i, '.png', sep=''), width=64, height=64)
+    p <- ggplot(o1) + geom_polygon(aes(x=x, y=y, group=zorder), fill=colors[i], colour="grey20", size=0.2, alpha=.75) + theme_l() + t + coord_equal() + xlab("") + ylab("")
+    print(p)
+    dev.off()
+
+    png(paste('outputs/fact/c', i, '.png', sep=''), width=64, height=64)
+    p <- ggplot(o2) + geom_polygon(aes(x=x, y=y, group=zorder), fill=colors[i], colour="grey20", size=0.2, alpha=.75) + theme_l() + t + coord_equal() + xlab("") + ylab("")
+    print(p)
+    dev.off()
+
+    png(paste('outputs/fact/t', i, '.png', sep=''), width=64, height=64)
+    p <- ggplot(o3) + geom_polygon(aes(x=x, y=y, group=zorder), fill=colors[i], colour="grey20", size=0.2, alpha=.75) + theme_l() + t + coord_equal() + xlab("") + ylab("")
+    print(p)
+    dev.off()
+    
+    png(paste('outputs/fact/o', i, '.png', sep=''), width=64, height=64)
+    p <- ggplot(o4) + geom_polygon(aes(x=x, y=y, group=zorder), fill=colors[i], colour="grey20", size=0.2, alpha=.75) + theme_l() + t + coord_equal() + xlab("") + ylab("")
+    print(p)
+    dev.off()
+    
+    png(paste('outputs/fact/d', i, '.png', sep=''), width=64, height=64)
+    p <- ggplot(o5) + geom_polygon(aes(x=x, y=y, group=zorder), fill=colors[i], colour="grey20", size=0.2, alpha=.75) + theme_l() + t + coord_equal() + xlab("") + ylab("")
+    print(p)
+    dev.off()
+    
+    png(paste('outputs/fact/i', i, '.png', sep=''), width=64, height=64)
+    p <- ggplot(o6) + geom_polygon(aes(x=x, y=y, group=zorder), fill=colors[i], colour="grey20", size=0.2, alpha=.75) + theme_l() + t + coord_equal() + xlab("") + ylab("")
+    print(p)
+    dev.off()
+  }
+}
+```
+
+projecting to a lower dimensional feature subspace without losing important information
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,fig.height=.5}
+old.par <- par(oma=c(0,0,0,0), mar=c(0, 0, 0, 0))
+
+#plot(x, y, col="darkred", pch=c(19, 15, 17, 19, 15), cex=3, axes=F, xlab="", ylab="")
+plot(x, y, col="darkred", pch=c(1, 0, 2, 1, 0), cex=3, axes=F, xlab="", ylab="")
+
+par(old.par)
+```
+
+depending on the problem to be solved.
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,fig.height=.5}
+old.par <- par(oma=c(0,0,0,0), mar=c(0, 0, 0, 0))
+
+plot(x, y, col=colors, pch=19, cex=3, axes=F, xlab="", ylab="")
+
+par(old.par)
+```
+
+
+
+
+## Summary
+
+- brief look at PCA (to know what we are talking about)
+- why dimensionality reduction
+- feature selection
+- supervised feature extraction: LDA, QDA
+- unsupervised feature extraction: PCA, sparse PCA, kernel PCA, ICA
+- non-linear dimensionality reduction: MDS, IsoMap, LLE, LLSTA, SOM
+- [mainly] visualization: t-SNE, UMAP
+- autoencoders: deep, sparse, stacked, contractive, denoising, recurrent, VAE, beta-VAE, UAE
+- adversarial networks: cVAEGAN
+
+<div class="notes"><smallest>
+- there are two ways of doing dimensionality reduction: feature selection, which is just dropping irrelevant columns from our data, and the more complex task of feature extraction <br>
+- presentation is mainly about feature extraction <br>
+- start from "simple" linear techniques, talk briefly about some non-linear dimensionality reduction algorithms and then get to autoencoders and generative networks, with an emphasis on variational autoencoders <br>
+- first we'll take a brief look on Principal Component Analysis, then see what you can use dimensionality reduction for, then talk about algorithms
+</smallest></div>
+
+## PCA
+
+<smaller>
+- finds a linear transformation of the input data such that the new frame of reference "better explains the data"
+</smaller>
+
+<div class="notes"><smallest>
+- what does it mean to better explain the data "in general" is an open question and depends on the problem you're trying to solve <br>
+- what it means in PCA's case is that it will transform the frame of reference, rotating the axis (and thus the input data) in such a way that most of the variance will be explained by the first axis, then by the other orhtonormal axes in decreasing order. Height+age for students versus height+age in all population<br>
+- example with people's height, weight and body mass index. Given the correlation, probably the 1st component is a combination of the inputs and something unrelated to humanly interpretable physical trait, and the 3rd component will be close to noise <br>
+- if we drop one of the components and keep only the first two, we can reduce dimensionality while (probably) still retaining most of the information in the original data. PCA has an assumption of linearity, works best when variance is equal and nicely distributed. And is sensitive to outliers <br>
+- linear regression is finding a linear relation between a target variable and a predictor, in 2D finding the line that is minimizing the distance between the line and the value of the response variable <br>
+- PCA finds as the first component the line that is minimizing the orthogonal distances to it. Minimum potential energy: rubber band example. <br>
+- bottom examples: represent our data in the new coordinate space or discard components, reduce dimensionality and represent the data as points on a line
+- works with classical euclidian variance (square of the distance), similarly to linear regression. Other measures of variance
+</smallest></div>
+
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="85%"}
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+library(ggpubr)
+library(gganimate)
+library(RColorBrewer)
+
+set.seed(123)
+
+ortho_seg <- function(x0, y0, a=0, b=1){
+  x1 <- (x0+b*y0-a*b)/(1+b^2)
+  y1 <- a + b*x1
+  df <- as.data.frame(list(x0=x0, y0=y0, x1=x1, y1=y1))
+  colnames(df) <- c("x0", "y0", "x1", "y1")
+  df
+}
+
+up_seg <- function(x0, y0, a=0, b=1){
+  x1 <- x0
+  y1 <- a + b*x1
+  df <- as.data.frame(list(x0=x0, y0=y0, x1=x1, y1=y1))
+  colnames(df) <- c("x0", "y0", "x1", "y1")
+  df
+}
+
+colors <- brewer.pal(n=8, name="Accent")
+
+ds <- data.frame(x=seq(1,20), y=seq(1,20)*0.5 + rnorm(20)*4)
+
+aspect_ratio <- (max(ds$y)-min(ds$y))/(max(ds$x)-min(ds$x))
+
+pc <- prcomp(ds, rank.=2)
+slope_pc <- pc$rotation[2]
+int_pc <- pc$rotation[1]
+
+dpc <- data.frame(x=pc$x[,1], y=pc$x[,2])
+
+os <- ortho_seg(ds$x, ds$y, int_pc, slope_pc)
+
+danim <- c(sin(seq(0.1, 5*pi, .3))/seq(0.1,5*pi,.3), rep(0, 100))
+os_anim <- lapply(1:length(danim), function (i) { cbind(iter=i, slope_pc=slope_pc+danim[i], x=ds$x, y=ds$y, ortho_seg(ds$x, ds$y, int_pc, slope_pc+danim[i])) })
+os_anim <- do.call(rbind, os_anim)
+
+p1 <- ggplot(ds) + 
+  geom_point(aes(x=x,y=y), col="tomato1") + 
+  theme_l() + theme(legend.position="none", aspect.ratio=aspect_ratio) +
+  geom_abline(slope=slope_pc, intercept=int_pc, col="gray", size=1.2) +
+  geom_segment(data=ortho_seg(ds$x, ds$y, int_pc, slope_pc), aes(x=x0, y=y0, xend=x1, yend=y1), col="dodgerblue") +
+  xlab("PCA") + ylab("") + coord_fixed()
+
+p1anim <- ggplot(os_anim) + 
+  geom_point(aes(x=x,y=y), col="tomato1") + 
+  theme_l() + theme(legend.position="none", aspect.ratio=aspect_ratio) +
+  transition_states(iter, transition_length=length(unique(os_anim$iter)), state_length=.5) +
+  geom_abline(slope=slope_pc, intercept=int_pc, col="gray", size=1.2) +
+  geom_segment(aes(x=x0, y=y0, xend=x1, yend=y1), col="dodgerblue") +
+  xlab("PCA") + ylab("") + coord_fixed()
+
+r <- lm(y~x, data=ds)
+slope_reg <- r$coefficients[2]
+int_reg <- r$coefficients[1]
+
+os <- up_seg(ds$x, ds$y, int_reg, slope_reg)
+
+p2 <- ggplot(ds) + 
+  geom_point(aes(x=x,y=y), col="tomato1") + 
+  theme_l() + theme(legend.position="none", aspect.ratio=aspect_ratio) +
+  geom_abline(slope=slope_reg, intercept=int_reg, col="gray", size=1.2) +
+  geom_segment(data=os, aes(x=x0, y=y0, xend=x1, yend=y1), colour="dodgerblue") +
+  xlab("Linear Regression") + ylab("") + coord_fixed()
+
+p3 <- ggplot(dpc) + 
+  geom_point(aes(x=x,y=y), col="tomato1") + 
+  theme_l() + theme(legend.position="none", aspect.ratio=aspect_ratio) +
+  geom_abline(slope=0, intercept=0, col="gray", size=1.2) +
+  geom_vline(xintercept=0, col="gray", size=1.2) +
+  xlab("PC1") + ylab("PC2") + coord_fixed()
+
+p4 <- ggplot(dpc) + 
+  theme_l() + theme(legend.position="none", aspect.ratio=aspect_ratio) +
+  geom_abline(slope=0, intercept=0, col="gray", size=1.2) +
+  geom_point(aes(x=x,y=0), col="tomato1") + 
+  xlab("PC1") + ylab("") + ylim(-10, 10) + coord_fixed()
+
+
+grid.arrange(p1, p2, p3, p4, ncol=2, respect=TRUE)
+
+```
+
+
+## Principal Component Analysis (PCA)
+
+<smaller>
+- generated an 8-dimensional dataset from the points on the left plot <br>
+- PCA is able to reconstruct a rotation of the source signal in the first 2 components
+</smaller>
+
+<div class="notes"><smallest>
+- example of reducing the number of dimensions by dropping redundant components. Removes redundant information while still catching most important features<br>
+- an 8-dim dataset was generated from the 2D source (left figure), adding 4 new dimensions that are linear combinations of the first with some additional noise, 1 dimension a quadratic function and 1 just noise <br>
+- we run PCA on this 8-dimensional data and dropped 6 of the components, keeping only the first two <br>
+- PCA finds a rotation of that 8-dimensional data such that if we keep only the 2 most important features (by PCA standards), we obtain something that is reconstructing the original signal quite well <br>
+- example visualizes the same dataset on which we run PCA. For the sake of exemplification it's ok anyway, but normally you should go with the train set/test set split, because real life problems are always working with unseen data <br>
+- PCA and few other algorithms are not in danger of overfitting, but you still have to worry for how representative was the sampling on which you trained <br>
+- the first principal component explains the highest variance/direction of variance <br>
+- dropping some components means to drop some variation (might be noise or relevant signal) <br>
+</smallest></div>
+
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,echo=FALSE,cache=TRUE,out.width="100%"}
+library(ggplot2)
+library(ggpubr)
+library(grid)
+library(gridExtra)
+library(ggExtra)
+library(RColorBrewer)
+library(rpart)
+library(rattle)
+library(caret)
+library(GGally)
+library(MASS)
+library(mlbench)
+
+set.seed(1234)
+
+x <- seq(-1.8, 2, .05)
+y <- 3*x + 3 + rnorm(length(x))
+c <- data.frame(group=1, x=x, y=y)
+
+x <- seq(-2, 3, .1)
+y <- 0.5*x + 5 + rnorm(length(x)) * 2 + 7
+c <- rbind(c, data.frame(group=2, x=x, y=y))
+
+x <- seq(-2, 3, .1)
+y <- -1.5*x + 5 + rnorm(length(x)) * 2 - 10
+c <- rbind(c, data.frame(group=3, x=x, y=y))
+
+c$x <- scale(c$x)
+c$y <- scale(c$y)
+
+angle <- pi/4
+M <- matrix(c(cos(angle), -sin(angle), sin(angle), cos(angle)), 2, 2)
+r <- data.frame(as.matrix(c[,2:3]) %*% M)
+c$x <- r$X1
+c$y <- r$X2
+
+c$group <- as.factor(c$group)
+
+c <- cbind(c, data.frame(d3=2*c$x+rnorm(length(c$x))/2-1,
+               d4=-4*c$x+rnorm(length(c$x))/2-2,
+               d5=-2*c$y+rnorm(length(c$x))/2+1,
+               d6=4*c$y+rnorm(length(c$x))/2+2,
+               d7=c$x*c$x+rnorm(length(c$x)),
+               d8=3*rnorm(length(c$x))))
+write.csv(c, "test_data_8.csv", row.names=F)
+
+pc <- prcomp(c[,2:ncol(c)], center=T, scale.=T)
+d <- as.data.frame(pc$x)
+d$group <- c$group
+
+p1 <- ggplot(c, aes(x=x, y=y, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Source")
+
+p2 <- ggpairs(c[,2:ncol(c)], axisLabels="none", columnLabels=NULL, mapping=aes(color=c$group, size=.01, alpha=.2), upper=list(continuous=wrap("cor", size=0.5)), lower=list(continuous=wrap("points", alpha=0.3, size=.2)), diag=list(continuous=wrap("densityDiag", alpha=0.2, size=.1))) + theme_l() + theme(legend.position="none", axis.ticks=element_blank(), panel.grid.major=element_line(colour=NA), panel.grid.minor=element_blank()) + xlab("") + ylab("")
+
+p3 <- ggplot(d, aes(x=PC1, y=PC2, col=group)) + geom_point(size=1) + labs(title="PCA") + theme_l() + theme(aspect.ratio=1, legend.position="none")
+
+q1 <- ggMarginal(p1, type="histogram", groupFill=T, size=10)
+q2 <- grid.grabExpr(print(p2))
+q3 <- ggMarginal(p3, type="histogram", groupFill=T, size=10)
+
+grid.arrange(q1, q2, q3, ncol=3, respect=TRUE)
+```
+
+
+## Why dimensionality reduction
+
+<smaller>
+When: <br>
+- lots of dimensions <br>
+- multiple time series with common underlying factors <br>
+<br>
+Why: <br>
+- exploratory data analysis <br>
+- visualizations <br>
+- extraction of underlying (or relevant) factors <br>
+- better data separability, informative clustering <br>
+- robust learning, less overfitting, improved supervised or unsupervised models performance <br>
+- noise reduction <br>
+- anomaly detection <br>
+- data compression <br>
+- less computational resources <br>
+</smaller>
+
+<div class="notes"><smallest>
+- use dimensionality reduction techniques when we have datasets with a lot of dimensions or we have multiple time series generated by common underlying factors <br>
+- extraction of underlying (or relevant) factors: sometimes we lose interpretability when extracting these factors, as in the body mass example, but sometimes we can discover interpretable ones
+</smallest></div>
+
+## Why dimensionality reduction
+
+<smaller>
+- extraction of underlying factors: various "input features" are just measurements which can reflect the same underlying (maybe hidden) factors. Sometimes we can extracts those factors or get better combined measurements
+</smaller>
+
+
+<div class="notes"><smallest>
+- PCA on 9 timeseries with US stock prices over the past 3 years, 5 banks and 4 oil companies <br>
+- one datapoint for each day and 9 values for each datapoint, telling us how much the price went down or up for each stock, then we look at the first 2 principal components <br>
+- top-left corner: a plot of their cummulative return <br>
+- PCA was run on the daily returns and kept only the first two components that resulted. So we converted the activity of 9 stocks into 2 factors. Athough the  principal components plot is close to noise, their cummulative form "make sense" (they have a relation with time) <br>
+- top row contains handcrafted factors: detrended version of the handcrafted market factor is similar to the cummulative value of the first principal component, and the "oil sector factor" is similar to the cummulative value of the second principal component <br>
+- sometimes we can extracting "relevant" factors from a series of related measurements <br>
+- if there is a temporal or spatial relation of the input datapoints, the lower dimensionality projections can reveal something meaningful in relation with that dimension (time in our example), even if there is no visible clustering in the new subspace
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,echo=FALSE,cache=TRUE}
+library(quantmod)
+
+start <- as.Date("2016-01-01")
+end <- as.Date("2019-03-15")
+
+retrieved <- getSymbols(c("CFG", "MS", "JPM", "GS", "USB", "CVX", "XOM", "EC", "BP"), src="yahoo", from=start, to=end)
+```
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="75%"}
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+library(quantmod)
+library(reshape2)
+
+df <- data.frame(dailyReturn(CFG$CFG.Adjusted),
+                 dailyReturn(MS$MS.Adjusted),
+                 dailyReturn(JPM$JPM.Adjusted),
+                 dailyReturn(GS$GS.Adjusted),
+                 dailyReturn(USB$USB.Adjusted),
+                 dailyReturn(CVX$CVX.Adjusted),
+                 dailyReturn(XOM$XOM.Adjusted),
+                 dailyReturn(EC$EC.Adjusted),
+                 dailyReturn(BP$BP.Adjusted))
+colnames(df) <- c("CFG", "MS", "JPM", "GS", "USB", "CVX", "XOM", "EC", "BP")
+
+write.table(df, "stocks.csv", col.names=F)
+
+pca <- prcomp(df, center=TRUE, scale.=FALSE)
+
+dg <- cumsum(df)
+dg$Date <- as.Date(rownames(df))
+
+dx <- melt(dg, id.vars="Date")
+colnames(dx) <- c("Date", "Stock", "CumulativeReturn")
+
+market <- rowMeans(df)
+banking <- rowMeans(cbind(df$CFG, df$MS, df$JPM, df$GS, df$USB))
+oil <- rowMeans(cbind(df$CVX, df$XOM, df$EC, df$BP))
+
+dg$Market <- cumsum(market)
+dg$OilSector <- cumsum(oil - market)
+dg$PC1 <- cumsum(pca$x[,1])
+dg$PC2 <- cumsum(pca$x[,2])
+
+p1 <- ggplot(dx, aes(x=Date, y=CumulativeReturn, col=Stock)) + geom_line(size=.5) + labs(title="Stocks") + theme(aspect.ratio=1) + theme_l() + theme(legend.position = "none")
+
+p2 <- ggplot(dg, aes(x=Date, y=Market)) + geom_line(size=.5, col="sienna2") + labs(title="Market Factor") + theme(aspect.ratio=1) + theme_l() + theme(legend.position = "none")
+
+p3 <- ggplot(dg, aes(x=Date, y=OilSector)) + geom_line(size=.5, col="dodgerblue") + labs(title="Oil Sector Factor") + theme(aspect.ratio=1) + theme_l() + theme(legend.position = "none")
+
+p4 <- ggplot(dg, aes(x=pca$x[,1], y=pca$x[,2], col="tomato1")) + geom_point(size=.5) + labs(title="") + xlab("PC1") + ylab("PC2") + theme(aspect.ratio=1) + theme_l() + theme(legend.position = "none")
+
+p5 <- ggplot(dg, aes(x=Date, y=PC1)) + geom_line(size=.5, col="sienna2") + labs(title="Cumulative PC1") + theme(aspect.ratio=1) + theme_l() + theme(legend.position = "none")
+
+p6 <- ggplot(dg, aes(x=Date, y=PC2)) + geom_line(size=.5, col="dodgerblue") + labs(title="Cumulative PC2") + theme(aspect.ratio=1) + theme_l() + theme(legend.position = "none")
+
+
+grid.arrange(p1, p2, p3, p4, p5, p6, ncol=3, respect=TRUE)
+
+
+```
+
+
+
+## Why dimensionality reduction
+
+<smaller>
+- sample Decision Tree on the 8-dim dataset used for the PCA example before, trained on 8 raw features and on 2 PCA components
+</smaller>
+
+
+<div class="notes"><smallest>
+- use extracted features in other machine learning algorithms rather instead of the raw input data <br>
+- applied a decision tree to the 8-dimensional dataset i previously presented, trying to predict the class of the points. The tree on the left was trained on the 8 dimensional raw data, while the tree on the right was trained only with the projections on the first two principal components <br>
+- we have both a simpler decision tree and higher accuracy for the tree on the right (which was run on the first 2 features extracted by PCA) <br>
+- unsupervised clustering algorithms can greatly benefit from running dimensionality reduction before being applied <br>
+- more robust learning (=works better when having noise or corner cases), less overfitting (=works better on unseen data), can mitigate "the curse of dimensionality" <br>
+- usually lower model complexity, can help interpretation and visualization  <br>
+- performance increase on supervised tasks: better prediction models performance (one can replace the inputs or combine with projections, adding them as new features). When replacing the features, usually better accuracy at similar complexity  <br>
+- boosted trees and random forests are less affected, but even there it can help when you struggle for few percents accuracy improvements <br>
+- still, beware of losing important low variance features with some techniques such as PCA (and try using also ICA to avoid that) <br>
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,echo=FALSE,cache=TRUE,out.width="70%"}
+library(rpart)
+library(rattle)
+library(caret)
+
+set.seed(1234)
+
+tr1 <- rpart(group ~ ., data=c, maxdepth=5)
+tr2 <- rpart(group ~ PC1 + PC2, data=d, maxdepth=5)
+
+par(mfrow=c(1,2))
+cm1 <- confusionMatrix(predict(tr1, c, type="class"), c$group)
+fancyRpartPlot(tr1, sub=paste("Raw data, accuracy", round(cm1$overall[1], 2)))
+
+cm2 <- confusionMatrix(predict(tr2, d, type="class"), d$group)
+fancyRpartPlot(tr2, sub=paste("Transformed data, accuracy", round(cm2$overall[1], 2)))
+
+par(mfrow=c(1,1))
+```
+
+
+## Why dimensionality reduction
+
+<smaller>
+- data compression<br>
+- why it works: successive data samples have some relation one to another
+</smaller>
+
+<div class="notes"><smallest>
+- a data point for each vertical line (so we have 768 points in a 512-dimensional space), and apply PCA to it, then we keep only few of these components: 5, 10 or 20 <br>
+- reconstructing the original data using PCA requires us to know the coordinates of the projections for each point and the direction of the old axis in the new reference system. This means for example that when reconstructing the image from the first 5 principal components we'll need 768 points with 5 coordinates and the first 5 rows of 512 elements from the rotation matrix <br>
+- image compression with PCA does not make sense, but it's a nice example of how few factors are needed to build a meaningful reconstruction of the original data (however, other dim red techniques like autoeconders do a better job)<br>
+- when using the first 10 components we already have a good enough image to make sense of it. This means that with just a bit over 3% of the original information we have a good understanding of the data
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="80%"}
+library(imager)
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+
+fpath <- system.file('extdata/parrots.png', package='imager')
+parrots <- grayscale(load.image(fpath))
+
+di <- as.data.frame(as.matrix(parrots))
+height <- nrow(di)
+width <- ncol(di)
+pc <- prcomp(di, center=FALSE, scale.=FALSE)
+
+cnt1 <- 5
+reconstructed1 <- pc$x[,1:cnt1] %*% t(pc$rotation[,1:cnt1])
+
+cnt2 <- 10
+reconstructed2 <- pc$x[,1:cnt2] %*% t(pc$rotation[,1:cnt2])
+
+cnt3 <- 20
+reconstructed3 <- pc$x[,1:cnt3] %*% t(pc$rotation[,1:cnt3])
+
+p1 <- ggplot(as.data.frame(parrots), aes(x,y)) + geom_raster(aes(fill=value)) + scale_y_continuous(trans=scales::reverse_trans()) + scale_fill_gradient(low="black",high="white") + theme_void() + labs(title=paste("Original 512x768:", height*width)) + theme(aspect.ratio=1, text=element_text(size=9))
+                                                                                                          
+p2 <- ggplot(as.data.frame(as.cimg(reconstructed1)), aes(x,y)) + geom_raster(aes(fill=value)) + scale_y_continuous(trans=scales::reverse_trans()) + scale_fill_gradient(low="black",high="white") + theme_void() + labs(title=paste("Reconstructed PC1-5:", height*cnt1+cnt1*width)) + theme(aspect.ratio=1, text=element_text(size=9))
+
+p3 <- ggplot(as.data.frame(as.cimg(reconstructed2)), aes(x,y)) + geom_raster(aes(fill=value)) + scale_y_continuous(trans=scales::reverse_trans()) + scale_fill_gradient(low="black",high="white") + theme_void() + labs(title=paste("Reconstructed PC1-10:", height*cnt2+cnt2*width)) + theme(aspect.ratio=1, text=element_text(size=9))
+
+p4 <- ggplot(as.data.frame(as.cimg(reconstructed3)), aes(x,y)) + geom_raster(aes(fill=value)) + scale_y_continuous(trans=scales::reverse_trans()) + scale_fill_gradient(low="black",high="white") + theme_void() + labs(title=paste("Reconstructed PC1-20:", height*cnt3+cnt3*width)) + theme(aspect.ratio=1, text=element_text(size=9))
+
+grid.arrange(p1, p2, p3, p4, ncol=2, respect=TRUE)
+
+
+```
+
+
+## Why dimensionality reduction
+
+<smaller>
+- noise removal and improved anomaly detection
+</smaller>
+
+<div class="notes"><smallest>
+- the 9 US stocks and applied PCA on their daily returns then marked the outliers at 99th percentile <br>
+- top-left chart 3 of the stocks are plotted with the outliers marked in the raw data. The red dots are the moments when the movement of a certain stock up or down was in top 1% as magnitude <br>
+- there is no good or bad method of looking at outliers, they just mean different things and they might be interesting depending on the problem you're trying to solve<br>
+- top-right chart shows outliers in the reconstructed data. Theoretically smoothed, free of noise that we consider irrelevant under the model's assumptions <br>
+- bottom-left chart shows outliers in the residuals. This means that we subtract the reconstruction from the original data and we look for the extreme "errors" that remain after applying our dimensionality reduction technique <br>
+- bottom-right chart shows the outliers in the factors. These are no longer tied to a certain column in our original data, so it's no longer tied to a stock, but rather to our newly extracted factors (interpretable or uninterpretable) <br>
+- this breakdown seems to complicate outliers detection instead of simplifying it, but actually allows looking at the problem from different angles
+</smallest></div>
+
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,echo=FALSE,cache=TRUE,out.width="80%"}
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+library(quantmod)
+library(reshape2)
+
+
+df <- data.frame(dailyReturn(CFG$CFG.Adjusted),
+                 dailyReturn(MS$MS.Adjusted),
+                 dailyReturn(JPM$JPM.Adjusted),
+                 dailyReturn(GS$GS.Adjusted),
+                 dailyReturn(USB$USB.Adjusted),
+                 dailyReturn(CVX$CVX.Adjusted),
+                 dailyReturn(XOM$XOM.Adjusted),
+                 dailyReturn(EC$EC.Adjusted),
+                 dailyReturn(BP$BP.Adjusted))
+colnames(df) <- c("CFG", "MS", "JPM", "GS", "USB", "CVX", "XOM", "EC", "BP")
+
+pc <- prcomp(df, center=F, scale.=F)
+
+dpc <- as.data.frame(pc$x)
+
+rdim <- 2
+r <- pc$x[,1:rdim] %*% t(pc$rotation[,1:rdim])
+dr <- as.data.frame(r)
+
+
+threshold <- 0.99
+
+
+rows <- nrow(df)-250+seq(250)
+subset <- c(1,5,8)
+dim_subset <- c(1, 2)
+
+#outliers computed from all raw data
+xup_limit <- quantile(as.matrix(df[,subset]), threshold)
+xdown_limit <- quantile(as.matrix(df[,subset]), 1 - threshold)
+
+#outliers in denoised (=reconstructed) data 
+yup_limit <- quantile(as.matrix(dr[,subset]), threshold)
+ydown_limit <- quantile(as.matrix(dr[,subset]), 1 - threshold)
+
+#outliers in residuals
+rup_limit <- quantile(as.matrix(df[,subset]-dr[,subset]), threshold)
+rdown_limit <- quantile(as.matrix(df[,subset]-dr[,subset]), 1 - threshold)
+
+#outliers in the first components
+pup_limit <- quantile(as.matrix(dpc[,dim_subset]), threshold)
+pdown_limit <- quantile(as.matrix(dpc[,dim_subset]), 1 - threshold)
+
+
+dg <- df[rows,subset, drop=F]
+dg_sum <- cumsum(df)[rows,subset, drop=F]
+colnames(dg) <- colnames(df)[subset]
+colnames(dg_sum) <- colnames(dg)
+dg$Date <- as.Date(rownames(df[rows,]))
+dg_sum$Date <- as.Date(rownames(df[rows,]))
+dx <- melt(dg, id.vars="Date")
+dx_sum <- melt(dg_sum, id.vars="Date")
+colnames(dx) <- c("Date", "Stock", "Return")
+colnames(dx_sum) <- c("Date", "Stock", "CumulativeReturn")
+
+dg <- dr[rows,subset, drop=F]
+dg_sum <- cumsum(dr)[rows,subset, drop=F]
+colnames(dg) <- colnames(df)[subset]
+colnames(dg_sum) <- colnames(dg)
+dg$Date <- as.Date(rownames(df[rows,]))
+dg_sum$Date <- as.Date(rownames(df[rows,]))
+dy <- melt(dg, id.vars="Date")
+dy_sum <- melt(dg_sum, id.vars="Date")
+colnames(dy) <- c("Date", "Stock", "Return")
+colnames(dy_sum) <- c("Date", "Stock", "CumulativeReturn")
+
+dg <- df[rows,subset, drop=F] - dr[rows,subset, drop=F]
+colnames(dg) <- colnames(df)[subset]
+dg$Date <- as.Date(rownames(df[rows,]))
+dres <- melt(dg, id.vars="Date")
+colnames(dres) <- c("Date", "Stock", "Residual")
+
+dg <- dpc[rows,dim_subset, drop=F]
+dg$Date <- as.Date(rownames(df[rows,]))
+dp <- melt(dg, id.vars="Date")
+colnames(dp) <- c("Date", "Axis", "Value")
+
+dx_out <- dx[dx$Return > xup_limit | dx$Return < xdown_limit,]
+dx_out$CumulativeReturn <- dx_sum[dx$Return > xup_limit | dx$Return < xdown_limit,]$CumulativeReturn
+
+p1 <- ggplot(dx_sum, aes(x=Date, y=CumulativeReturn, col=Stock)) + geom_line(size=.5) + labs(title="Outliers in raw data") + theme(aspect.ratio=1) + theme_l() + theme(legend.position = "none", axis.text.x=element_text(angle=25)) + geom_point(data=dx_out, mapping=aes(x=Date, y=CumulativeReturn), col="red", size=1)
+
+#dy_out <- dy[dy$Return > yup_limit | dy$Return < ydown_limit,]
+#dy_out$CumulativeReturn <- dy_sum[dy$Return > yup_limit | dy$Return < ydown_limit,]$CumulativeReturn
+#p2 <- ggplot(dy_sum, aes(x=Date, y=CumulativeReturn, col=Stock)) + geom_line(size=.5) + labs(title="Stocks") + theme(aspect.ratio=1) + theme_l() + theme(legend.position = "none") + geom_point(data=dy_out, mapping=aes(x=Date, y=CumulativeReturn), col="red", size=1) # on reconstructed data
+
+dy_out <- dy[dy$Return > yup_limit | dy$Return < ydown_limit,]
+dy_out$CumulativeReturn <- dy_sum[dy$Return > yup_limit | dy$Return < ydown_limit,]$CumulativeReturn
+p2 <- ggplot(dy_sum, aes(x=Date, y=CumulativeReturn, col=Stock)) + geom_line(size=.5) + labs(title="Outliers in reconstruction") + theme(aspect.ratio=1) + theme_l() + theme(legend.position = "none", axis.text.x=element_text(angle=25)) + geom_point(data=dy_out, mapping=aes(x=Date, y=CumulativeReturn), col="red", size=1)
+
+dr_out <- dy[dres$Residual > rup_limit | dres$Residual < rdown_limit,]
+dr_out$CumulativeReturn <- dy_sum[dres$Residual > rup_limit | dres$Residual < rdown_limit,]$CumulativeReturn
+p3 <- ggplot(dy_sum, aes(x=Date, y=CumulativeReturn, col=Stock)) + geom_line(size=.5) + labs(title="Outliers in residuals") + theme(aspect.ratio=1) + theme_l() + theme(legend.position = "none", axis.text.x=element_text(angle=25)) + geom_point(data=dr_out, mapping=aes(x=Date, y=CumulativeReturn), col="red", size=1)
+
+
+dp_out <- dp[dp$Value > pup_limit | dp$Value < pdown_limit,]
+dp_min <- min(dx_sum$CumulativeReturn)
+dp_max <- max(dx_sum$CumulativeReturn)
+p4 <- ggplot(dx_sum, aes(x=Date, y=CumulativeReturn, col=Stock)) + geom_line(size=.5) + labs(title="Outliers in factors") + theme(aspect.ratio=1) + theme_l() + theme(legend.position = "none", axis.text.x=element_text(angle=25)) +
+  geom_segment(data=dp_out, aes(x=Date, y=dp_min, xend=Date, yend=dp_max), col="red", alpha=.3) 
+  #geom_point(data=dp_out, mapping=aes(x=Date, y=CumulativeReturn), col="red", size=1)
+
+
+grid.arrange(p1, p2, p3, p4, ncol=2, respect=TRUE)
+
+```
+
+## Feature selection
+
+<smaller>
+- feature selection vs feature extraction: dropping features vs creating new ones <br>
+- low variance filter <br>
+- correlation based filtering <br>
+- univariate feature selection <br>
+- recursive feature elimination <br>
+- variable importance based filtering
+</smaller>
+
+<div class="notes"><smallest>
+- selection is a "degenerate case" of dimensionality reduction: drops off irrelevant columns <br>
+- selection might help in obtaining better results, no matter the model, or improve the results of feature extracting methods (like PCA). Or maybe not <br>
+- low variance filter: simply remove constant or near-constant features. Use with caution, chart on the right example has the lowest variance for the generative factors <br>
+- correlation filtering is removing the features that are highly correlated to other columns, left chart example <br>
+- univariate selection: select top k features based on statistical tests against the output variable (such as ANOVA, chi-squared, mutual information) <br>
+- recursive feature elimination: [usually linear] fitting of all features against the output, then filter out low performers in an iterative fashion. It handles both low variance and colinear features <br>
+- selection by variable importance: beta as importance score for linear regression. Recommend tree ensambles <br>
+- use decision trees for non-linearity: depth as naive measure in decision tree. Information gain or decrease in gini impurity <br>
+- random forests (mean decrease in gini or mean decrease in accuracy: trained data vs out of bag) and boosted trees (count in splits divided by total splits or average gain across splits)
+</smallest></div>
+
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,echo=FALSE,cache=TRUE,out.width="70%"}
+library(ggcorrplot)
+library(GGally)
+library(gridExtra)
+library(RColorBrewer)
+library(reshape2)
+
+c<- read.csv("test_data_8.csv")
+c$group <- as.factor(c$group)
+
+p1 <- ggcorr(c[,2:ncol(c)], label=T, label_size=3, label_round=2, label_alpha=TRUE) + theme_l()
+
+v <- as.data.frame(c[,2:ncol(c)])
+colors <- brewer.pal(n=ncol(v), name="Spectral")
+p2 <- ggplot(melt(v), aes(variable, value)) + geom_jitter(aes(color=colors[variable]), size = 0.7) + theme_l() + theme(aspect.ratio=1, legend.position="none") + xlab("") + ylab("") 
+
+grid.arrange(p1, p2, ncol=2, layout_matrix=rbind(c(1, 1, 2, 2)))
+
+```
+
+
+
+## Linear Discriminant Analysis (LDA)
+
+<smaller>
+- supervised methods try to reduces the number of dimensions by trying to maximize the class separation <br>
+- LDA also computes a decision boundary, it can be used as a classifier <br>
+- projections to the first component have the highest class separation (LDA decomposition focus is separation, while PCA decomposition focus is correlation)
+</smaller>
+
+<div class="notes"><smallest>
+- bayesian classifier, computes decision boundaries so they also can be used to predict the class of unseen data points <br>
+- in order to achieve that linear separation, LDA makes the assumption that all the groups share the same covariance (this means that although the groups are different, how the predictor and target variables vary in relation to each other is similar across all groups) <br>
+- data needs to be linearly separable, does not work ok when means and variances are correlated <br>
+- although used for a different purpose, it has some similarity with MANOVA <br>
+- example on an 8-dimensional dataset, it does not quite satisfy the same covariance requirement because of the blue group, but it still worked ok. LDA makes a transformation of the data such that the first component allows the best linear separation of the classes, then the second dimension and so on <br>
+- Fished Discriminant Analysis - LDA with 2 classes, KFDA - kernel version for non-linear separation
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,echo=FALSE,cache=TRUE,out.width="80%"}
+library(MASS)
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+library(ggExtra)
+
+set.seed(1234)
+
+x <- seq(-3, 2, .12)
+y <- (30*x + 26 + 7*rnorm(length(x))) / 20
+c <- data.frame(x=x, y=y)
+
+x <- seq(-2, 2, .1)
+y <- (14*x - 27 + 7*rnorm(length(x))) / 20
+c <- rbind(c, data.frame(x=x, y=y))
+
+nm <- matrix(rnorm(40), nc=2) / 2
+x <- nm[,1] - 2
+y <- 3 + nm[,2]
+c <- rbind(c, data.frame(x=x, y=y))
+
+nm <- matrix(rnorm(40), nc=2) / 2
+x <- nm[,1] - 2.5
+y <- 4 + nm[,2]
+c <- rbind(c, data.frame(x=x, y=y))
+
+
+c <- cbind(c, data.frame(d3=2*c$x+rnorm(length(c$x))/2-1,
+               d4=-4*c$x+rnorm(length(c$x))/2-2,
+               d5=-2*c$y+rnorm(length(c$x))/2+1,
+               d6=4*c$y+rnorm(length(c$x))/2+2,
+               d7=c$x*c$x+rnorm(length(c$x)),
+               d8=3*rnorm(length(c$x))))
+
+c$group <- as.factor(floor(1 + seq(1, nrow(c)) / 42))
+
+write.csv(c, "test_data3.csv")
+
+
+pc <- prcomp(c[,1:8], center=F, scale.=F, rank.=2)
+dp <- data.frame(PC1=pc$x[,1], PC2=pc$x[,2], group=c$group)
+
+ld <- lda(group~x+y+d3+d4+d5+d6+d7+d8, data=c)
+proj <- predict(ld, c)
+dx <- data.frame(LD1=proj$x[,1], LD2=proj$x[,2], group=c$group)
+
+
+p1 <- ggplot(c, aes(x=x, y=y, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Original data")
+
+p2 <- ggplot(dp, aes(x=PC1, y=PC2, col=group)) + geom_point(size=1) + labs(title="PCA") + theme_l() + theme(aspect.ratio=1, legend.position="none")
+
+p3 <- ggplot(dx, aes(x=LD1, y=LD2, col=group)) + geom_point(size=1) + labs(title="LDA") + theme_l() + theme(aspect.ratio=1, legend.position="none")
+
+q1 <- ggMarginal(p1, type="histogram", groupFill=T, size=10)
+q2 <- ggMarginal(p2, type="histogram", groupFill=T, size=10)
+q3 <- ggMarginal(p3, type="histogram", groupFill=T, size=10)
+
+grid.arrange(q1, q2, q3, ncol=3, respect=TRUE)
+
+```
+
+## Quadratic Discriminant Analysis (QDA)
+
+<smaller>
+- can be used as a classifier <br>
+- suitable for non-linearly separable data <br>
+- less assumptions about the distributions than LDA, QDA computes both means and covariance for each group
+</smaller>
+
+<div class="notes"><smallest>
+- QDA allows non-linear boundaries, so it is suitable for more complicated datasets <br>
+- decision boundary is, as the name mentions, a quadratic function <br>
+- a main difference compared to LDA is that it makes less assumptions about the data distribution and it computes the covariance for each group <br>
+- disadvantage: the number of fitted parameters grows a lot with the number of dimensions, so you need more datapoints if you don't want to overfit <br>
+- another 8-dimensional example. QDA produces something that is much easier to separate<br>
+- choose LDA over QDA when data sample is small, sparse or expect linear separability. Be aware about the "same covariance" assumption and that LDA is prone to work badly when the means and the covariance of the groups are correlated.
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,echo=FALSE,cache=TRUE,out.width="70%"}
+library(MASS)
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+library(ggExtra)
+
+set.seed(1234)
+
+x <- seq(-2, 2, .05)
+y <- (x*x + 1*rnorm(length(x)))
+c <- data.frame(x=x, y=y, group=1)
+
+x <- seq(-2, 2, .05)
+y <- (x*x + 3*abs(x) + 2 + 0.7*rnorm(length(x)))
+c <- rbind(c, data.frame(x=x, y=y, group=2))
+
+x <- rnorm(80) / 2
+y <- 9 + rnorm(80)
+c <- rbind(c, data.frame(x=x, y=y, group=3))
+
+c$y <- c$y/3 - 2
+
+group <- c$group
+c$group <- NULL
+
+
+c <- cbind(c, data.frame(d3=c$x+rnorm(length(c$x))/2-1,
+               d4=c$x+rnorm(length(c$x))/2-2,
+               d5=2*c$y+rnorm(length(c$x))/3+1,
+               d6=-c$y+rnorm(length(c$x))/2+2,
+               d7=3*c$x+rnorm(length(c$x)),
+               d8=rnorm(length(c$x))/2))
+
+
+c$group <- as.factor(group)
+
+write.csv(c, "test_data4.csv")
+
+pc <- prcomp(c[,1:8], center=F, scale.=F, rank.=2)
+dp <- data.frame(PC1=pc$x[,1], PC2=pc$x[,2], group=c$group)
+
+ld <- lda(group~x+y+d3+d4+d5+d6+d7+d8, data=c)
+proj <- predict(ld, c)
+dx <- data.frame(LD1=proj$x[,1], LD2=proj$x[,2], group=c$group)
+
+qd <- qda(group~x+y+d3+d4+d5+d6+d7+d8, data=c, method="moment")
+proj <- predict(qd, c)
+dy <- data.frame(QD1=proj$posterior[,1], QD2=proj$posterior[,2], group=c$group)
+
+
+p1 <- ggplot(c, aes(x=x, y=y, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Original data")
+
+p2 <- ggplot(dp, aes(x=PC1, y=PC2, col=group)) + geom_point(size=1) + labs(title="PCA") + theme_l() + theme(aspect.ratio=1, legend.position="none")
+
+p3 <- ggplot(dx, aes(x=LD1, y=LD2, col=group)) + geom_point(size=1) + labs(title="LDA") + theme_l() + theme(aspect.ratio=1, legend.position="none")
+
+p4 <- ggplot(dy, aes(x=QD1, y=QD2, col=group)) + geom_point(size=1) + labs(title="QDA") + theme_l() + theme(aspect.ratio=1, legend.position="none")
+
+q1 <- ggMarginal(p1, type="histogram", groupFill=T, size=10)
+q2 <- ggMarginal(p2, type="histogram", groupFill=T, size=10)
+q3 <- ggMarginal(p3, type="histogram", groupFill=T, size=10)
+q4 <- ggMarginal(p4, type="histogram", groupFill=T, size=10)
+
+grid.arrange(q1, q2, q3, q4, ncol=2, respect=TRUE)
+
+```
+
+
+## PCA
+
+<smaller>
+- when dropping components: projection to lower dimensional space <br>
+- the new axes define a lower dimensional subspace, the compressed dataset is built from the new coordinates of the projected points in this subspace
+</smaller>
+
+
+<div class="notes"><smallest>
+- PCA again. visualization is a better illustration of what dimensionality reduction by dropping features while retaining relevant information means <br>
+- PCA finds orthogonal vectors that allow writing the data as linear combinations of the basis. Or, reformulating, explains correlated data with fewer uncorrelated variables (and those variables are linear combinations of the originals) <br>
+- PCA explains variability, reduces correlation between axis and when dropping components, indirectly reduces entropy of the data <br>
+- closed form <br>
+- there is no assumption about the distribution in PCA, but works best when the signal is a linear combinations of factors, the factors are independent and orthogonal sources, the source factors are homoscedastic <br>
+- relation to Factor Analysis -> FA has no orthogonality constraint <br>
+- PCA will take as the first axis the one that maximizes the explained variance. A DT will split on a condition that maximizes the information gain or node purity (gini index)
+</smallest></div>
+
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,results='hide'}
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+library(RColorBrewer)
+library(plot3D)
+library(animation)
+library(magick)
+
+set.seed(1234)
+
+c1 <- matrix(rnorm(150), nc=2)
+c1 <- cbind(c1, 1)
+c1[,1] <- 3 * c1[,1]
+c1[,2] <- c1[,2]^2
+c2 <- matrix(rnorm(200), nc=2)
+c2 <- cbind(7 + 2 * c2, 2)
+c3 <- matrix(rnorm(80), nc=2)
+c3 <- cbind(15 + 2 * c3, 3)
+c3[,1] = c3[,1] - 15
+
+c <- as.data.frame(rbind(c1, c2, c3))
+colnames(c) <- c("x", "y", "group")
+g = as.factor(c$group)
+c$group <- NULL
+c$z <- seq(1, nrow(c)) / 500 + rnorm(nrow(c)) / 100
+c$group <- g
+#put it on a plane
+fit <- lm(z ~ x + y, data=c)
+c$z <- predict(fit) + rnorm(nrow(c)) / 50
+
+write.csv(c, "test_data.csv")
+
+pc <- prcomp(c[,1:3], center=TRUE, scale.=FALSE)
+d <- as.data.frame(pc$x)
+colnames(d) <- c("PC1", "PC2")
+d$group <- c$group
+
+fname <- 'plot3d.gif'
+colors <- brewer.pal(n=length(unique(c$group)), name="Set1")[c$group]
+saveGIF({
+    x.mesh <- seq(min(c$x), max(c$x), length.out=16)
+    y.mesh <- seq(min(c$y), max(c$y), length.out=16)
+    xy <- expand.grid(x=x.mesh, y=y.mesh)
+    z.mesh <- matrix(predict(fit, newdata=xy), nrow=16, ncol=16)
+    for(i in seq(1, 360, 3)) {
+        scatter3D(c$x, c$y, c$z, pch=20, cex=1, theta=i, ticktype="detailed", col=colors, xlab="x", ylab="y", zlab="z", colkey=F, surf=list(x=x.mesh, y=y.mesh, z=z.mesh, facets=NA, col="gainsboro"))
+    }
+}, movie.name=fname, interval=0.2)
+
+a <- image_animate(image_transparent(image_read(fname), 'white'), dispose="previous")
+image_write(a, fname)
+
+
+fname <- 'pca3d.gif'
+r <- pc$x[,1:2] %*% t(pc$rotation[,1:2]) #reconstruct from the first 2 components
+saveGIF({
+    for(i in seq(1, 360, 3)) {
+        scatter3D(r[,1], r[,2], r[,3], pch=20, cex=1, theta=i, ticktype="detailed", col=colors, xlab="x", ylab="y", zlab="z", colkey=F)
+    }
+}, movie.name=fname, interval=0.2)
+
+a <- image_animate(image_transparent(image_read(fname), 'white'), dispose="previous")
+image_write(a, fname)
+```
+
+![](plot3d.gif) ![](pca3d.gif)
+
+
+## PCA
+
+ <smaller>
+- what to look at: the principal components, explained variance by axis, direction of initial vectors in the new subspace, datapoints projection, reconstruction (additive from contributions on each axis), estimated dimensionality
+ </smaller>
+
+<div class="notes"><smallest>
+- scree plot: how much of the data variance is explained by each new axis. 3rd dimension explains very little, so it's a dimension that can be "safely" dropped <br>
+- estimated dimensionality: looking at the number of significantly positive eigenvalues or at cummulative percentage of explained variance (trap: noise can be a good part of the variance) <br>
+- the second plot: the direction of the new axis relative to the original cartesian reference system. eigenvectors = the new rotation/axes vectors, eigenvalues = explained variance <br>
+- third plot: the relation of the datapoints in the new reference system. individuals color heatmap: the importance of the principal component for the datapoint (square cosine = contribution of the component to datapoint's distance to origin) <br>
+- reconstruction: it's just a "change of basis" and without loss of information if the number of components is equal to the number of features <br>
+- "what to look at": mention also outputs for generative models, graphic representations of datapoints in the latent space, or (when clustering) average activations by feature
+</smallest></div>
+
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="80%"}
+library(ggplot2)
+library(gridExtra)
+library(grid)
+library(factoextra)
+library(dslabs)
+library(reshape2)
+
+c <- read.csv("test_data.csv", stringsAsFactors=F)
+c$group <- as.factor(c$group)
+
+pc <- prcomp(c[, c("x", "y", "z")])
+
+colors <- c("#00AFBB", "#E7B800", "#FC4E07")
+
+q1 <- fviz_eig(pc)
+q2 <- fviz_pca_var(pc, col.var="contrib", gradient.cols=colors, repel=T)
+q3 <- fviz_pca_ind(pc, col.ind="cos2", label="none", gradient.cols=colors, repel=T, addEllipses=F) + theme(legend.position="none", aspect.ratio=aspect_ratio)
+
+grid.arrange(q1, q2, q3, ncol=3, respect=TRUE)
+
+```
+
+
+## sparse PCA
+
+<smaller>
+- PCA vs sparse PCA: both are linear transformations, sparse PCA just another rotation <br>
+- iterative algorithm using shrinkage methods (lasso, ridge, elastic net) <br> 
+- adds a regularization term to the loss function, penalizing non-zero coefficients
+</smaller>
+
+<div class="notes"><smallest>
+- yet another linear transformation, just like PCA, but which adds some sparsity constraints <br>
+- theoretically simpler, more interpretable features while the results should be similar to PCA <br>
+- 8-dimensional dataset example: both PCA and Sparse PCA produced very close results, but the table which tells how the principal components are built as linear combinations from the original dimensions differs. PCA has significant contributions from several dimensions, the Sparse PCA algorithm is basically selecting two of the existing dimensions as relevant and enough to explain the data <br>
+- sparse PCA: iterative algo, adds a regularization term, similarly how ridge or lasso regression work <br>
+- L1 (Lasso) or L2 (Ridge) regularization variants are common <br>
+- certain implementation allow specifing how many "relevant features" to be allowed in the principal components
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="75%"}
+library(MASS)
+library(ggplot2)
+library(ggpubr)
+library(elasticnet)
+library(gridExtra)
+library(ggExtra)
+
+
+set.seed(1234)
+
+c<- read.csv("test_data_8.csv")
+c$group <- as.factor(c$group)
+
+
+pc <- prcomp(c[,2:ncol(c)], center=TRUE, scale.=FALSE, rank.=2)
+d <- as.data.frame(pc$x)
+d$group <- c$group
+
+p1 <- ggplot(c, aes(x=x, y=y, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Original data")
+
+p2 <- ggplot(d, aes(x=PC1, y=PC2, col=group)) + geom_point(size=1) + labs(title="PCA") + theme_l() + theme(aspect.ratio=1, legend.position="none")
+
+
+spc <- spca(c[,2:ncol(c)], K=2, c(2, 2), sparse="varnum")
+
+d <- as.data.frame(as.matrix(c[,2:ncol(c)]) %*% spc$loadings)
+colnames(d) <- c("PC1", "PC2")
+d$group <- c$group
+
+p3 <- ggplot(d, aes(x=PC1, y=PC2, col=group)) + geom_point(size=1) + labs(title="Sparse PCA") + theme_l() + theme(aspect.ratio=1, legend.position="none")
+
+q1 <- ggMarginal(p1, type="histogram", groupFill=T, size=10)
+q2 <- ggMarginal(p2, type="histogram", groupFill=T, size=10)
+q3 <- ggMarginal(p3, type="histogram", groupFill=T, size=10)
+
+loadings <- cbind(pc$rotation, spc$loadings)
+colnames(loadings) <- c("PCA.PC1", "PCA.PC2", "SPCA.PC1", "SPCA.PC2")
+loadings <- format(loadings, digits=4)
+t <- tableGrob(loadings, theme=ttheme_minimal(base_size=7))
+
+grid.arrange(q1, t, q2, q3, ncol=2, respect=TRUE)
+
+```
+
+## Independent Component Analysis (ICA)
+
+<smaller>
+- ICA vs PCA - variance explaining and orthogonal features vs signal explaining and independent features <br>
+- iterative algorithms doing minimization of mutual information or maximization of non-gaussianity (negentropy or kurtosis)
+</smaller>
+
+<div class="notes"><smallest>
+- PCA: sources of variance with an orthogonality constraint, ICA: "signals" from which the data is built, usually without an orthogonality constraint. Two lines with different noise added, PCA finds the axis in the direction of  variance, ICA finds our real source factors <br>
+- wide range of ICA algorithms available, some of the most used are FastICA, InfoMax, Jade (reconstruction, orthonormal, RADICAL) <br>
+- pre-processing of the data ("whitening", transforming to uncorrrelated and unit variance), main difference is in the optimized target <br>
+- Infomax variants: minimizing the mutual information, "how much information is obtained about a random variable by observing another variable". InfoGAN reference, trying to maximize mutual information between the input data and a small subset of the cells in the latent layer <br>
+- maximize non-gaussianity: negentropy as a measure of distance of a distribution to being gaussian. Mention why the normal distribution has the highest entropy from all distributions for a given mean and variance <br>
+- highly structured data vs noise - lower entropy = an "ideal world" has no information, higher entropy = noise, a lot of (maybe) useless information. Noise is hardest to reconstruct from projections, but also easy to generate (or something "with similar properties") <br>
+- a gaussian distribution maximizes disorder, easily described in parametric form, but a lot of bits needed to retain the information. All constituents have the same probability, none can have a shorter encoding. Maximizing the kurtosis: shape of the tails (high = few outliers, low =a lot of outliers). Excess kurtosis <br>
+- why the normal distribution appears, dices and markets example. Rigged dices. Jumps example, finding a projection of the data such that it becomes more ordered.
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="80%"}
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+library(fastICA)
+library(RColorBrewer)
+library(rmgarch)
+
+set.seed(1234)
+
+colors <- brewer.pal(n=8, name="Paired")
+
+ds1 <- data.frame(x=seq(-100,99), y=seq(-100,99)*-0.6 + 3 + rnorm(200)*4, s="signal1")
+ds2 <- data.frame(x=seq(-100,99)-0.5, y=seq(-100,99)*0.6 - 3 + rnorm(200)*2*(100-abs(seq(-100,99)))/15, s="signal2")
+
+ds <- rbind(ds1, ds2)
+ds$s <- as.factor(ds$s)
+
+aspect_ratio <- (max(ds$y)-min(ds$y))/(max(ds$x)-min(ds$x))
+
+p1 <- ggplot(ds) + 
+  geom_point(aes(x=x,y=y),col=colors[ds$s]) + 
+  theme_l() + theme(legend.position="none", aspect.ratio=aspect_ratio) + xlab("Original") + ylab("") + coord_fixed()
+
+pc <- prcomp(ds[,1:2], center=TRUE, scale.=FALSE, rank.=2)
+slope_pc <- pc$rotation[,2] / pc$rotation[,1]
+int_pc <- pc$center[2] - slope_pc * pc$center[1]
+
+p2 <- ggplot(ds) + 
+  geom_point(aes(x=x,y=y),col=colors[ds$s]) + 
+  geom_abline(slope=slope_pc[1], intercept=int_pc[1], col="tomato1", size=2) +
+  geom_abline(slope=slope_pc[2], intercept=int_pc[2], col="tomato1", size=1) +
+  theme_l() + theme(legend.position="none", aspect.ratio=aspect_ratio) + xlab("PCA") + ylab("") + coord_fixed()
+
+ic <- fastICA(ds[,1:2], n.comp=2, alg.typ="deflation")
+slope_ic <- ic$A[,2] / ic$A[,1]
+int_ic <- c(0, 0)
+
+p3 <- ggplot(ds) + 
+  geom_point(aes(x=x,y=y),col=colors[ds$s]) + 
+  geom_abline(slope=slope_ic[1], intercept=int_ic[1], col="tomato1", size=2) +
+  geom_abline(slope=slope_ic[2], intercept=int_ic[2], col="tomato1", size=1) +
+  theme_l() + theme(legend.position="none", aspect.ratio=aspect_ratio) + xlab("ICA") + ylab("")+ coord_fixed()
+
+grid.arrange(p1, p2, p3, ncol=3, respect=TRUE)
+
+```
+
+## ICA
+
+<smaller>
+- ICA extracts "independent features", theoretically the reconstruction of original images should be better if they have low mutual information
+</smaller>
+
+<div class="notes"><smallest>
+- two images, built two linear combinations of them and added some noise, then tried to extract the principal components with PCA and with ICA, taking as datapoints pairs of pixels from both combined images <br>
+- ICA extracts a better reconstruction of the original images. Theoretically it should happen if they have low mutual information, that means that if two sources of signal are different enough, ICA will be able to extract them <br>
+- no noise in PC1 because its variability is low, noise will usually go in the last dimension (this is also a good example of noise removal and smoothing)<br>
+- better reconstructed original in IC1, but noise is part of both components
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="90%"}
+library(imager)
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+library(ica)
+library(fastICA)
+
+range_norm <- function(x) { (x - min(x)) / (max(x) - min(x)) }
+
+fpath <- system.file('extdata/coins.png', package='imager')
+image1 <- grayscale(boats) #load.image(fpath)
+fpath <- system.file('extdata/parrots.png', package='imager')
+image2 <- grayscale(load.image(fpath))
+#image2 <- grayscale(parrots) #grayscale(load.image(fpath))
+
+height <- min(nrow(image1), nrow(image2))
+width <- min(ncol(image1), ncol(image2))
+di1 <- as.matrix(image1)[1:height, 1:width]
+di2 <- as.matrix(image2)[1:height, 1:width]
+
+set.seed(1234)
+
+linear_comb1 <- as.vector(di1) * abs(rnorm(1)) + as.vector(di2) * abs(rnorm(1)) + rnorm(nrow(di2)*ncol(di2)) / 30
+linear_comb2 <- as.vector(di1) * abs(rnorm(1)) + as.vector(di2) * abs(rnorm(1)) + rnorm(nrow(di2)*ncol(di2)) / 30
+dif <- cbind(range_norm(linear_comb1), range_norm(linear_comb2))
+
+pc <- prcomp(dif, center=FALSE, scale.=FALSE)
+#ic <- icaimax(dif, nc=2, center=FALSE)
+ic <- fastICA(dif, n.comp=2, alg.typ="deflation")
+
+#cnt <- 1
+#rec_pc1 <- pc$x[,1:cnt] %*% t(pc$rotation[,1:cnt])
+#rec_ic1 <- t(t(ic$W)[,1:cnt] %*% t(ic$S[,1:cnt]))
+
+rec_pc1 <- matrix(range_norm(pc$x[,1]), ncol=width)
+rec_pc2 <- matrix(range_norm(pc$x[,2]), ncol=width)
+
+rec_ic1 <- matrix(range_norm(ic$S[,1]), ncol=width)
+rec_ic2 <- matrix(range_norm(ic$S[,2]), ncol=width)
+
+
+p1 <- ggplot(as.data.frame(as.cimg(di1)), aes(x,y)) + geom_raster(aes(fill=value)) + scale_y_continuous(trans=scales::reverse_trans()) + scale_fill_gradient(low="black",high="white") + theme_void() + labs(title="Image 1") + theme(aspect.ratio=1, text=element_text(size=8))
+
+p2 <- ggplot(as.data.frame(as.cimg(matrix(dif[,1], ncol=width))), aes(x,y)) + geom_raster(aes(fill=value)) + scale_y_continuous(trans=scales::reverse_trans()) + scale_fill_gradient(low="black",high="white") + theme_void() + labs(title="Combined+noise (1)") + theme(aspect.ratio=1, text=element_text(size=8))
+
+p3 <- ggplot(as.data.frame(as.cimg(rec_pc1)), aes(x,y)) + geom_raster(aes(fill=value)) + scale_y_continuous(trans=scales::reverse_trans()) + scale_fill_gradient(low="black",high="white") + theme_void() + labs(title="PC 1") + theme(aspect.ratio=1, text=element_text(size=8))
+
+p4 <- ggplot(as.data.frame(as.cimg(rec_pc2)), aes(x,y)) + geom_raster(aes(fill=value)) + scale_y_continuous(trans=scales::reverse_trans()) + scale_fill_gradient(low="black",high="white") + theme_void() + labs(title="PC 2") + theme(aspect.ratio=1, text=element_text(size=8))
+
+p5 <- ggplot(as.data.frame(as.cimg(di2)), aes(x,y)) + geom_raster(aes(fill=value)) + scale_y_continuous(trans=scales::reverse_trans()) + scale_fill_gradient(low="black",high="white") + theme_void() + labs(title="Image 2") + theme(aspect.ratio=1, text=element_text(size=8))
+
+p6 <- ggplot(as.data.frame(as.cimg(matrix(dif[,2], ncol=width))), aes(x,y)) + geom_raster(aes(fill=value)) + scale_y_continuous(trans=scales::reverse_trans()) + scale_fill_gradient(low="black",high="white") + theme_void() + labs(title="Combined+noise (2)") + theme(aspect.ratio=1, text=element_text(size=8))
+
+p7 <- ggplot(as.data.frame(as.cimg(rec_ic1)), aes(x,y)) + geom_raster(aes(fill=value)) + scale_y_continuous(trans=scales::reverse_trans()) + scale_fill_gradient(low="black",high="white") + theme_void() + labs(title="IC 1") + theme(aspect.ratio=1, text=element_text(size=8))
+
+p8 <- ggplot(as.data.frame(as.cimg(rec_ic2)), aes(x,y)) + geom_raster(aes(fill=value)) + scale_y_continuous(trans=scales::reverse_trans()) + scale_fill_gradient(low="black",high="white") + theme_void() + labs(title="IC 2") + theme(aspect.ratio=1, text=element_text(size=8))
+
+
+grid.arrange(p1, p2, p3, p4, p5, p6, p7, p8, ncol=4, respect=TRUE)
+
+```
+
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,results='hide'}
+library(ggplot2)
+library(ggpubr)
+library(plot3D)
+library(dimRed)
+library(RColorBrewer)
+library(scatterplot3d)
+library(animation)
+library(KODAMA)
+library(magick)
+
+set.seed(1234)
+
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+
+sr <- as.data.frame(swissroll(2000))
+colnames(sr) <- c("x", "y", "z")
+sr$group <- as.factor(paste("g", round(seq(nrow(sr)) / 500), sep=""))
+write.csv(sr, "test_data_sr.csv", row.names=F)
+
+dat <- loadDataSet("3D S Curve")
+s <- data.frame(x=dat@data[,1], y=dat@data[,3])
+s <- s[order(s$y),]
+s$z <- sin(pi*sort(dat@data[,2])) + rnorm(nrow(dat@data))/5
+
+
+g <- round(seq(nrow(s)) / 500)
+colors <- gg_color_hue(length(unique(g)))[g+1]
+s$group <- as.factor(paste("g", g, sep=""))
+write.csv(s, "test_data_s.csv", row.names=F)
+
+ggplotColours <- function(n = 6, h = c(0, 360) + 15){
+  if ((diff(h) %% 360) < 1) h[2] <- h[2] - 360/n
+  hcl(h = (seq(h[1], h[2], length = n)), c = 100, l = 65)
+}
+
+#colors <- brewer.pal(n=length(unique(s$group)), name="Set1")[s$group]
+
+animation <- FALSE
+
+fname <- 's.gif'
+if (animation) {
+  saveGIF({
+      for(i in seq(1, 360, 5)) {
+          scatter3D(s$x, s$y, s$z, theta=i, col="red", xlab="x", ylab="y", zlab="z", colkey=F, cex=.8, pch=20, alpha=.5)
+      }
+  }, movie.name=fname, interval=0.2, bg="transparent")
+  
+  a <- image_animate(image_transparent(image_read(fname), 'white'), dispose="previous")
+  image_write(a, fname)
+} else {
+  a <- image_graph(width=400, height=400, res=40)
+  scatterplot3d(s$x, s$y, s$z, angle=330, color=colors, xlab="x", ylab="y", zlab="z", asp=1.3, grid=TRUE, box=FALSE, pch=20, bg="transparent", cex.lab=1, cex.axis=1)
+  dev.off()
+  image_write(image_transparent(a, 'white'), fname)
+}
+```
+
+
+## PCA on non-linear data
+
+<smaller>
+- sometimes linear transformations are not enoguh
+</smaller>
+
+<div class="notes"><smallest>
+- any algorithm that does only linear transformation, like the ones seen previously, won't help too much for the datasets like those in this slide <br>
+- the concentric circles are not linearly separable and the S shape rotations look similar no matter the linear transformation applied <br>
+- 3D S letter with lineary increasing z, with an additional sinus function perturbation: the groups are artificial, just to track to movement of the points in the extracted features. 
+</smallest></div>
+
+<table><tr><td colspan=2> 
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,results='hide',out.width="120%"}
+library(ggplot2)
+library(ggpubr)
+library(grid)
+library(gridExtra)
+
+set.seed(1234)
+
+c1 <- matrix(rnorm(150), nc=2)
+c1 <- cbind(c1 / sqrt(rowSums(c1^2)), 1)
+c2 <- matrix(rnorm(200), nc=2)
+c2 <- cbind(2 * c2 / sqrt(rowSums(c2^2)), 2)
+c3 <- matrix(rnorm(80), nc=2)
+c3 <- cbind(3 * c3 / sqrt(rowSums(c3^2)), 3)
+
+c <- as.data.frame(rbind(c1, c2, c3))
+colnames(c) <- c("x", "y", "group")
+c$group = as.factor(c$group)
+
+write.csv(c, "test_data2.csv")
+
+
+pc <- prcomp(c[,1:2])
+
+p1 <- ggplot(c, aes(x=x, y=y, col=group)) + geom_point(size=1) + theme_l() + theme(legend.position = "none", aspect.ratio=1) + labs(title="Dataset 1") + xlab("") + ylab("")
+
+p2 <- ggplot(c, aes(x=pc$x[,1], y=pc$x[,2], col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="PC1 vs PC2") + xlab("") + ylab("")
+
+
+s <- read.csv("test_data_s.csv")
+pc2 <- prcomp(s[,1:3], rank.=2)
+
+
+p3 <- ggplot(s, aes(x=x, y=y, col=group)) + geom_point(size=1) + theme_l() + theme(legend.position = "none", aspect.ratio=1) + labs(title="Dataset 1") + xlab("") + ylab("")
+
+p4 <- ggplot(s, aes(x=pc2$x[,1], y=pc2$x[,2], col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="PC1 vs PC2") + xlab("") + ylab("")
+
+#blank <- grid.rect(gp=gpar(col="white"))
+
+grid.arrange(p1, p2, p3, p4, ncol=2, respect=TRUE)
+
+```
+
+</td><td>
+
+![](s.gif)
+
+</td></tr></table>
+
+## kernel PCA
+
+<smaller>
+- "kernel trick": a mapping function computing the similarities between points in a higher dimension in order to obtain better data separability, without actually knowing where the points are in the higher dimensional space <br>
+- linear, polynomial, spline, radial basis function (RBF), ANOVA RBF etc. <br>
+- a RBF kernel projects into an infinite dimensional space, it is way more complex than the 2D gaussian function on the right<br>
+</smaller>
+
+<div class="notes"><smallest>
+- probably encountered kernels when playing with SVMs, but they can be used in a lot of contexts, including PCA or ICA <br>
+- "kernel trick":  mapping similarities between points in a higher dimension, without actually doing the transformation and knowning where the datapoints lie in the higher dimensional space <br>
+- left image: 3 groups of points belonging to two classes. There is no line which we can draw in such a way that it separates the two classes, but they can be transformed to something like in the second image by warping the space, A4 page folding example <br>
+- many possible kernels, most common: linear, polynomial and the RBF. Any kernel can be used, including custom ones. The two dimensional gaussian function on the right as well. A RBF kernel is way more complex than that, as it projects in an infinite dimensional space <br>
+- kernel trick: computationally cheap, no need to represent in higher dimension first, which might be computationally intractable (or impossible to represent, as in RBF kernel case) <br>
+- no actual recipe, always experiment. For something like the example on this slide use a polynomial kernel. For sparse data, such as text, use a linear kernel and when the data is smooth, try a RBF kernel.Finding the right kernel is tricky and using custom kernels possible, but not likely. Autoencoders: in a way finding "a good kernel" automatically
+<smaller></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,webgl=TRUE,out.width="50%"}
+par(mfrow=c(1,2))
+
+pfun <- function(x) { (6*x*x+x+1)/40 }
+
+px <- c(-3.7, 0, 3.6, 0.05, -3.65, 0.1, 2.97, 0.3, -2.99, -0.1, 3.2, 0.15, -2.88, 0.1, 3.1)
+py <- c(-1, -2, 0, 0, 1, 2, 1, -0.5, -0.5, 0.15, 0.15, 0.5, 0.5, 0.75, 0.75)
+pz <- pfun(px)
+plot(px, py, pch=19, col=c("tomato1", "dodgerblue"), xlab="", ylab="", asp=1)
+plot(px, pz, pch=19, col=c("tomato1", "dodgerblue"), xlab="", ylab="", ylim=c(0, 2.5))
+
+x <- seq(-4, 4, 0.2)
+y <- seq(-4, 4, 0.2)
+z <- matrix(rep(pfun(x), times=length(y)), length(x), length(y))
+
+trans3d <- function(x, y, z, pmat) {
+    tr <- cbind(x, y, z, 1) %*% pmat
+    list(x = tr[,1]/tr[,4], y = tr[,2]/tr[,4])
+}
+
+p <- persp(x, y, z, theta=14, phi=35, r=2, axes=F, shade=0.4, scale=T, box=T, col="antiquewhite", nticks=5, ticktype="detailed", border=NA)
+
+points(trans3d(px, py, pz, p), col=c("tomato1", "dodgerblue"), pch=19, cex=.7)
+lines(trans3d(x, rep(0, length(x)), sapply(1:length(x), function(i) pfun(x[i])), p), col="darkred", lwd=1)
+lines(trans3d(c(x[1], x[length(x)]), c(0, 0), pfun(c(x[1], x[length(x)])), p), col="darkred", lwd=1)
+
+x <- seq(-4,4,0.2)
+y <- seq(-4,4,0.2)
+z <- matrix(nrow=length(x), ncol=length(x))
+sigma = 1.0
+mux = 0.0
+muy = 0.0
+for(i in 1:length(x)) { for(j in 1:length(y)) { z[i,j] <- (1/(2*pi*sigma^2)) * exp(-((x[i]-mux)^2 + (y[j]-muy)^2)/(2*sigma^2)) } }
+
+persp(x, y, z, theta=14, phi=35, r=2, axes=F, shade=0.4, scale=T, box=T, col="antiquewhite", zlim=c(0,0.2), nticks=5, ticktype="detailed", border=NA)
+
+
+par(mfrow=c(1,1))
+
+```
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="50%"}
+library(kernlab)
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+
+set.seed(1234)
+
+c <- read.csv("test_data2.csv", stringsAsFactors=F)
+group <- as.factor(c$group)
+c <- c[,2:3]
+p1 <- ggplot(c, aes(x=x, y=y, col=group)) + geom_point(size=2) + theme_l() + theme(aspect.ratio=1)
+
+kpc <- kpca(~., data=c, kernel="rbfdot", kpar=list(sigma=3), features=2)
+d <- as.data.frame(kpc@rotated)
+colnames(d) <- c("PC1", "PC2")
+d$group <- group
+
+p2 <- ggplot(d, aes(x=PC1, y=PC2, col=group)) + geom_point(size=2) + theme_l() + theme(aspect.ratio=1)
+
+#grid.arrange(p1, p2, ncol=2, respect=TRUE)
+```
+
+## kernel PCA
+
+<smaller>
+- maps points without making a projection, it just computes a dot-product between points "as if"" they were from a higher dimension <br>
+- kernel parameters tuning: various methods, usually grid search <br>
+- models incorporate external knowledge when applying a certain kernel or technique (including by the choice of the parameters) <br>
+</smaller>
+
+<div class="notes"><smallest>
+- kernels have parameters and you'll need to tune then in order to improve your results <br>
+- animations show the results of applying a RBF kernel PCA on the two datasets, the concentric circles and the S shape, to show the impact of the sigma parameter <br>
+- by applying a certain kernel you're actually embedding knowledge about the problem in your model. Also the choice of kernel's parameters is "external knowledged" that you put in your model <br>
+- a RBF kernel has a single parameter, while polynomial kernels have more <br>
+- some kernel calculation times increase with the size of the dataset (RBF quadratic) <br>
+- searching the values of kernel parameters is also an open question. Usually k-fold cross validation and a grid search or, if you have many parameters, strategies used for any black box optimization: greedy, simulated annealing, genetic algos, gradient descent, random jumps with hill climbing, tabu search etc.
+<smaller></div>
+
+
+<table><tr><td>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="120%"}
+library(kernlab)
+library(ggplot2)
+library(ggpubr)
+library(gganimate)
+
+r <- seq(.2, 3, .2)
+k <- NULL
+for (i in 1:length(r)) {
+    kpc <- kpca(~., data=c, kernel="rbfdot", kpar=list(sigma=r[i]), features=2)
+    d <- as.data.frame(kpc@rotated)
+    colnames(d) <- c("PC1", "PC2")
+    d$group <- group
+    d$sigma <- r[i]
+    k <- rbind(k, d)
+}
+
+a <- ggplot(k, aes(x=PC1, y=PC2, col=group)) + geom_point(size=2) + labs(title = 'Sigma: {closest_state}') + theme_l() + theme(aspect.ratio=1) + transition_states(sigma, transition_length=2, state_length=10)
+
+animate(a, fps=10)
+```
+
+</td><td>
+
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="120%"}
+s <- read.csv("test_data_s.csv")
+
+r <- seq(.2, 3, .2)
+k <- NULL
+for (i in 1:length(r)) {
+    kpc <- kpca(~., data=s[,1:3], kernel="rbfdot", kpar=list(sigma=r[i]), features=2)
+    d <- as.data.frame(kpc@rotated)
+    colnames(d) <- c("PC1", "PC2")
+    d$group <- s$group
+    d$sigma <- r[i]
+    k <- rbind(k, d)
+}
+
+a <- ggplot(k, aes(x=PC1, y=PC2, col=group)) + geom_point(size=2) + labs(title = 'Sigma: {closest_state}') + theme_l() + theme(aspect.ratio=1) + transition_states(sigma, transition_length=2, state_length=10)
+
+animate(a, fps=10)
+
+
+```
+
+</td></tr></table>
+
+## Multidimensional Scaling (MDS)
+
+<smaller>
+- non-linear transformation, applied on distances (can be non-euclidian) <br>
+- transforms the proximity metric to fitted distances in a lower dimensional space, such that the disparities are mapped as good as possible<br>
+- preserves topology <br>
+</smaller>
+
+<div class="notes"><smallest>
+- MDS: non-linear technique used for visualization before algorithms like SNE or UMAP appeared <br>
+- applied on distances between points rather than on the points themselves. It operates with the relation between datapoints and not on their values. Any kind of distances can be passed to the algorithm, but it's common to apply them on euclidean distances <br>
+- multiple variants of the algo, main idea is transforming the proximity measures we pass to it to fitted distances in a lower dimensional space in such a way that the disparities (not the similarities) between the original points are mapped as good as possible in the projected space <br>
+- standard MDS: eigendecomposition on the squared proximity matrix<br>
+- nonmetric MDS: iterative, starts with an arbitrary initialization in the lower dimensional space, minimizes a cost function measuring how well disparities are fitted ("Kruskal's stress-1 index", values <0.05 are considered "good")  <br>
+- distance between projected points is no longer euclidian, is a measure of sample similarity. Axes are arbitrary, no longer interpretable, they are not "principal components" in a standard sense. No orthogonality constraint <br>
+- MDS, like autoencoders, is not necessarily projecting in lower dimensions, they could as well find a "better" representation in a higher dimensional space <br>
+- quite sensitive to the random initialization. Needs "remapping" if the dataset changes, any new point needs re-running the algorithm
+</smallest></div>
+
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="70%"}
+library(LS2Wstat)
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+
+set.seed(1234)
+
+c <- read.csv("test_data2.csv", stringsAsFactors=F)
+c$group <- as.factor(c$group)
+
+dst <- as.matrix(dist(c[,1:3]))
+m <- cmdscale(dst, eig=TRUE, k=3)
+
+s <- read.csv("test_data_s.csv")
+dst <- as.matrix(dist(s[,1:3]))
+ms <- cmdscale(dst, eig=TRUE, k=3)
+
+
+p1 <- ggplot(c, aes(x=x, y=y, col=group)) + geom_point(size=2) + theme_l() + theme(legend.position = "none", aspect.ratio=1) + labs(title="Dataset 1") + xlab("") + ylab("")
+
+p2 <- ggplot(c, aes(x=m$points[,1], y=m$points[,3], col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 1 vs 3") + xlab("") + ylab("")
+
+p3 <- ggplot(c, aes(x=m$points[,2], y=m$points[,3], col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 2 vs 3") + xlab("") + ylab("")
+
+p4 <- ggplot(s, aes(x=x, y=y, col=group)) + geom_point(size=1) + theme_l() + theme(legend.position = "none", aspect.ratio=1) + labs(title="Dataset 2") + xlab("") + ylab("")
+
+p4z <- ggplot(s, aes(x=y, y=z, col=group)) + geom_point(size=1) + theme_l() + theme(legend.position = "none", aspect.ratio=1) + labs(title="Dataset 2") + xlab("") + ylab("")
+
+p5 <- ggplot(s, aes(x=ms$points[,1], y=ms$points[,3], col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 1 vs 3") + xlab("") + ylab("")
+
+p6 <- ggplot(s, aes(x=ms$points[,2], y=ms$points[,3], col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 2 vs 3") + xlab("") + ylab("")
+
+grid.arrange(p1, p2, p3, p4, p5, p6, ncol=3, respect=TRUE)
+
+
+```
+
+## IsoMap
+
+<smaller>
+- Isometric Feature Mapping Ordination<footnote>https://web.mit.edu/cocosci/Papers/sci_reprint.pdf</footnote> <br>
+- uses "geodesic" distances: retains only some of the graph distances among objects (the smaller ones) and estimates all dissimilarities as shortest path distances
+</smaller>
+
+<div class="notes"><smallest>
+- runs on distances and it's an extension of MDS <br>
+- main difference is that it works on the so-called "geodesic distances" instead of the going with the original distances: as a first pass the algorithm will retain only some of the distances between datapoints, the smaller ones that are linking the points, then estimate disimiliarities between points as the shortest path in the remaining graph <br>
+- why geodesic distances: euclidean distances are prone to become irrelevant when the number of dimensions is very large <br>
+- works best when there are quite a lot of dimensions, the sample i used was not quite the best choice <br>
+- drawbacks: needs remapping when adding new points, quite slow when the dataset size is increasing, sensitive to noise
+</smallest></div>
+
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="80%"}
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+library(vegan)
+
+set.seed(1234)
+
+s <- read.csv("test_data_s.csv")
+filter <- seq(1, nrow(s), 3)
+s <- s[filter,]
+dst <- as.matrix(dist(s[,1:3]))
+im <- isomap(dst, ndim=3, epsilon=1.5, path="extended", fragmentedOK=T)
+
+
+p1 <- ggplot(s, aes(x=x, y=y, col=group)) + geom_point(size=1) + theme_l() + theme(legend.position = "none", aspect.ratio=1) + labs(title="Dataset 1") + xlab("") + ylab("")
+
+p2 <- ggplot(s[1:nrow(im$points),], aes(x=im$points[,1], y=im$points[,3], col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 1 vs 3") + xlab("") + ylab("")
+
+p3 <- ggplot(s[1:nrow(im$points),], aes(x=im$points[,2], y=im$points[,3], col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 2 vs 3") + xlab("") + ylab("")
+
+grid.arrange(p1, p2, p3, ncol=3, respect=TRUE)
+
+```
+
+<smaller>The S curve fit shown above is not necessarily a good example, IsoMap is more helpful when having many dimensions</smaller>
+
+## Locally Linear Embedding (LLE)
+
+<smaller>
+- finds neighbours, computes the weights that best reconstruct the points from its neighbors as linear combinations, map to embedded coordinates by computing the best reconstruction from those weights <br>
+- "think globally, fit locally"<footnote>http://www.jmlr.org/papers/volume4/saul03a/saul03a.pdf</footnote>
+</smaller>
+
+<div class="notes"><smallest>
+- overlapping local neighborhoods, when collectively analyzed, can provide information the about global geometry <br>
+- assume we have a dataset with points from a 3D shape, first we find neighborhoods of points, then we take a sheet of A4 paper and move it around, projecting these points on it, and finally we re-assemble these projections in some special way, we obtain a lower dimensional representation of the data. Reformulation: cutting some linear patches on which we projected our neighborhoods and reassemble them such that we preserve the angles formed by each datapoint to its neighbors <br>
+- has a single parameter, the number of neighbors, and that we have a guarantee of global optimality. This number of neighbors is an indirect measure of how much of the global structure is retained <br>
+- works best if the original data is locally linear (a 3D S leter with no perturbation) <br>
+- (LLE has a dynamic number of neighborhoods while SOM has a fixed one)
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,results='hide',out.width="80%"}
+library(ggplot2)
+library(ggpubr)
+library(gganimate)
+library(gridExtra)
+library(magick)
+library(lle)
+
+set.seed(1234)
+
+s <- read.csv("test_data_s.csv")
+filter <- seq(1, nrow(s), 3)
+s <- s[filter,]
+#k <- calc_k(s[,1:3], m=3)
+
+animation <- FALSE
+
+if (animation) {
+  sk <- seq(10, 150, 10)
+  dfll <- NULL
+  for (k in sk) {
+    ll <- lle(s[,1:3], m=3, k=k)
+    lld <- as.data.frame(ll$Y)
+    lld$group <- s$group
+    lld$k <- k
+    dfll <- rbind(dfll, lld)
+  }
+  
+  p1 <- ggplot(s, aes(x=x, y=y, col=group)) + geom_point(size=1) + theme_l() + theme(legend.position = "none", aspect.ratio=1) + labs(title="Dataset 1") + xlab("") + ylab("")
+
+  p2 <- ggplot(dfll, aes(x=V1, y=V3, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 1 vs 3 (k={closest_state})") + xlab("") + ylab("") + transition_states(k, transition_length=length(sk), state_length=30)
+
+  p3 <- ggplot(dfll, aes(x=V2, y=V3, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 2 vs 3 (k={closest_state})") + xlab("") + ylab("") + transition_states(k, transition_length=length(sk), state_length=30)
+
+  p2a <- animate(p2)
+  p3a <- animate(p3)
+  
+  a2 <- image_read(p2a)
+  a3 <- image_read(p3a)
+  
+  a1 <- image_graph(width=480, height=480, res = 150)
+  print(p1)
+  dev.off()
+
+  res <- image_append(c(a1, a2[1], a3[1]))
+  for(i in 2:100) {
+    combined <- image_append(c(a1, a2[i], a3[i]))
+    res <- c(res, combined)
+  }
+  
+  fname <- "lle.gif"
+  image_write(res, fname)
+
+} else {
+  ll <- lle(s[,1:3], m=3, k=15)
+  dfll <- as.data.frame(ll$Y)
+  dfll$group <- s$group
+  
+  p1 <- ggplot(s, aes(x=x, y=y, col=group)) + geom_point(size=1) + theme_l() + theme(legend.position = "none", aspect.ratio=1) + labs(title="Dataset 1") + xlab("") + ylab("")
+
+  p2 <- ggplot(dfll, aes(x=V1, y=V3, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 1 vs 3") + xlab("") + ylab("")
+
+  p3 <- ggplot(dfll, aes(x=V2, y=V3, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 2 vs 3") + xlab("") + ylab("")
+
+  grid.arrange(p1, p2, p3, ncol=3, respect=TRUE)
+}
+
+
+```
+
+
+## Linear Latent Tangent Space Alignment (LLTSA)
+
+<smaller>
+- LTSA variant<footnote>https://www.sciencedirect.com/science/article/pii/S0925231206004577</footnote> <br>
+- computes nearest neighbors, finds a tangent space to each neighborhood and combines those to find an embedding that aligns the tangents
+</smaller>
+
+<div class="notes"><smallest>
+- the idea is similar to LLE, overlapping local geometry can represent the global geometry of a manifold <br>
+- LTSA takes the neighborhoods and, instead of finding a local projection, it find some kind of tangent to the neighborhood (usually PCA is performed and the so-called tangent is in the direction of the variance) <br>
+- these tangents (which are actually embeddings of the local data) are put in an alignment matrix that is further decomposed <br>
+- main idea: some kind of directions of where the data is distributed are extracted, these tangents are aligned in one way or another, then the datapoints are projected along these lines <br>
+- the PCA approximation is problematic when the data is sparse or non-uniformly distributed and there are various "Improved LTSA" algorithms tackling this problem
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,results='hide',out.width="80%"}
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+library(Rdimtools)
+
+set.seed(1234)
+
+s <- read.csv("test_data_s.csv")
+ls <- do.lltsa(s[,1:3], ndim=3, type=c("knn", 75))
+
+p1 <- ggplot(s, aes(x=x, y=y, col=group)) + geom_point(size=1) + theme_l() + theme(legend.position = "none", aspect.ratio=1) + labs(title="Dataset 1") + xlab("") + ylab("")
+
+p2 <- ggplot(s, aes(x=ls$Y[,1], y=ls$Y[,3], col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 1 vs 3") + xlab("") + ylab("")
+
+p3 <- ggplot(s, aes(x=ls$Y[,2], y=ls$Y[,3], col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 2 vs 3") + xlab("") + ylab("")
+
+grid.arrange(p1, p2, p3, ncol=3, respect=TRUE)
+
+```
+
+
+## t-SNE
+
+<smaller>
+- Stochastic Neighbor Embedding variant<footnote>http://www.jmlr.org/papers/volume9/vandermaaten08a/vandermaaten08a.pdf</footnote> <br>
+- measures similarity between points by converting euclidian distances to probabilities according to the normal distribution, then tries to minimize the similarities in the projected space (using KLD) according to a t-distribution <br>
+- has a cost function that includes an attractive force and a repulsive one, optimized using gradient descent
+</smaller>
+
+<div class="notes"><smallest>
+- t-SNE: mainly used for visualization, became almost standard in the past years for data exploration <br>
+- converts euclidean distances between datapoints to a normal distribution, then projects the points to a lower dimension trying to minimize the similarities in the projected space according to a t-distribution, using Kullback-Leibler Divergence <br>
+- KLD: one of the many ways to measure the difference between two distribution. "how much information is lost when approximating one distribution with another" or "how much a sample helps - on average - to distinguish between two distributions" <br>
+- difference between t-SNE and the original SNE algorithm is that it uses a student t-distribution in the latent space. Why the t-distribution: it has fatter tails and allows a nice spreading of the data, the projected points get nicely repelled and this circumvents the crowding problem <br>
+- Perplexity matters, the lower the value the more "local relation" between datapoints matters, while a higher value is a kind of zoom-out. An indirect measure of the optimal size of the neighborhoods t-SNE would like to preserve the structure for. Beware of "false clustering": t-SNE's job is to produce neighborhoods <br>
+- t-SNE is non-parametric and it does not create a mapping function. Needs re-run when adding points and results can be different <br>
+- PCA is mapping euclidean distances, MDS is mapping similarities and t-SNE is mapping joint probabilities. Compared to autoencoders, t-SNE is preserving the neighborhood probabilities, while autoencoders minimize the reconstruction error <br>
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,results='hide'}
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+library(tsne)
+library(gganimate)
+library(magick)
+
+s <- read.csv("test_data_s.csv")
+filter <- seq(1, nrow(s), 3)
+s <- s[filter,]
+dst <- as.matrix(dist(s[,1:3]))
+
+#ts <- tsne(dst, k=3, perplexity=50, max_iter=1000)
+r <- seq(5, 30, 5)
+ts <- NULL
+for (i in 1:length(r)) {
+    t <- tsne(dst, k=2, perplexity=r[i], max_iter=300)
+    d <- as.data.frame(t)
+    d$group <- s$group
+    d$perplexity <- r[i]
+    ts <- rbind(ts, d)
+}
+
+
+p1 <- ggplot(s, aes(x=x, y=y, col=group)) + geom_point(size=1) + theme_l() + theme(legend.position = "none", aspect.ratio=1, text=element_text(size=9)) + labs(title="Dataset 1") + xlab("") + ylab("") + transition_null()
+
+p2 <- ggplot(ts, aes(x=V1, y=V2, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none", text=element_text(size=9)) + labs(title="1 vs 2. Perplexity: {closest_state}") + xlab("") + ylab("") + transition_states(perplexity, transition_length=4, state_length=10)
+
+#p3 <- ggplot(ts, aes(x=V2, y=V3, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none", text=element_text(size=9)) + labs(title="2 vs 3. Perplexity: {closest_state}") + xlab("") + ylab("") + transition_states(perplexity, transition_length=2, state_length=10)
+
+```
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE}
+library(gganimate)
+library(magick)
+
+p1a <- animate(p1, width=300, height=300)
+p2a <- animate(p2, width=300, height=300)
+#p3a <- animate(p3, width=300, height=300)
+
+a1 <- image_read(p1a)
+a2 <- image_read(p2a)
+#a3 <- image_read(p3a)
+#res <- image_append(c(a1[1], a2[1], a3[1]))
+res <- image_append(c(a1[1], a2[1]))
+for(i in 2:100) {
+  #combined <- image_append(c(a1[i], a2[i], a3[i]))
+  combined <- image_append(c(a1[i], a2[i]))
+  res <- c(res, combined)
+}
+
+fname <- "tsne.gif"
+image_write(res, fname)
+
+```
+
+![](tsne.gif)
+
+
+## UMAP
+
+<smaller>
+- Uniform Manifold Approximation and Projection<footnote>https://arxiv.org/abs/1802.03426</footnote> <br>
+- much faster, has similar or better results than t-SNE and can transfer learning (can be used to predict) <br>
+- preserves more of the global structure
+</smaller>
+
+<div class="notes"><smallest>
+- a more recent method recommended over t-SNE <br>
+- beautiful piece of modern mathematics and its applications in machine learing, it moves from probabilities like in t-SNE to affinities, and from fixed neighborhoods to fuzzy topological representations of the data <br>
+- instead of belonging to a neighborhood, the datapoints have probabilities of being part of a simplex (which is a generalization of a triangle in N-dimensional space), then optimizes the lower dimensional representation by minimizing the cross-entropy of the two fuzzy sets, in the original representation and in the lower dimensional space <br>
+- the arguments for using it is that it's much faster than t-SNE, has similar or better results than t-SNE, it preserves more of the global structure and can transfer learning, which means that it can predict a representation in the lower dimensional space for unseen datapoints
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,results='hide',out.width="60%"}
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+library(umap)
+library(gganimate)
+library(magick)
+
+set.seed(1234)
+
+s <- read.csv("test_data_s.csv")
+
+cfg = umap.defaults
+cfg$n_components = 2
+
+r <- seq(5, 30, 5)
+ts <- NULL
+for (i in 1:length(r)) {
+    cfg$n_neighbors = r[i]
+    um <- umap(s[,1:3], config=cfg)
+    d <- as.data.frame(um$layout)
+    d$group <- s$group
+    d$neighbors <- r[i]
+    ts <- rbind(ts, d)
+}
+
+p1 <- ggplot(s, aes(x=x, y=y, col=group)) + geom_point(size=1) + theme_l() + theme(legend.position = "none", aspect.ratio=1) + labs(title="Dataset 1") + xlab("") + ylab("") + transition_null()
+
+#p2 <- ggplot(s, aes(x=um$layout[,1], y=um$layout[,2], col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 1 vs 2") + xlab("") + ylab("")
+
+p2 <- ggplot(ts, aes(x=V1, y=V2, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none", text=element_text(size=9)) + labs(title="1 vs 2. Neighbors: {closest_state}") + xlab("") + ylab("") + transition_states(neighbors, transition_length=4, state_length=10)
+
+
+#grid.arrange(p1, p2, ncol=2, respect=TRUE)
+
+p1a <- animate(p1, width=300, height=300)
+p2a <- animate(p2, width=300, height=300)
+
+a1 <- image_read(p1a)
+a2 <- image_read(p2a)
+res <- image_append(c(a1[1], a2[1]))
+for(i in 2:100) {
+  combined <- image_append(c(a1[i], a2[i]))
+  res <- c(res, combined)
+}
+
+fname <- "umap.gif"
+image_write(res, fname)
+
+
+```
+
+![](umap.gif)
+
+## t-SNE vs UMAP
+
+<smaller>
+- MNIST dataset visualization
+</smaller>
+
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="60%"}
+library(tsne)
+library(umap)
+library(rerf)
+
+set.seed(1234)
+
+data(mnist)
+
+#dg <- as.data.frame(mnist$Xtest)
+#dg$class <- paste("_", mnist$Ytest, sep="")
+#write.csv(dg, "mnist.csv")
+
+group <- as.factor(mnist$Ytest)
+
+ts <- tsne(mnist$Xtest, k=2, perplexity=150, max_iter=500)
+dts <- as.data.frame(ts)
+
+cfg = umap.defaults
+cfg$n_neighbors = 150
+um <- umap(mnist$Xtest, config=cfg)
+dum <- as.data.frame(um$layout)
+```
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="70%"}
+library(ggplot2)
+library(gridExtra)
+
+p1 <- ggplot(dts, aes(x=V1, y=V2, col=group)) + geom_point(size=.5, alpha=.7) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 1 vs 2") + xlab("perplexity=150, iterations=500") + ylab("")
+
+p2 <- ggplot(dum, aes(x=V1, y=V2, col=group)) + geom_point(size=.5, alpha=.7) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 1 vs 2") + xlab("neighbors=150") + ylab("")
+
+grid.arrange(p1, p2, ncol=2, respect=TRUE)
+
+```
+
+
+
+
+## Self Organizing Maps (SOM)
+
+<smaller>
+- a type of neural network mapping high dimensional data to a fixed grid of cells, preserving the topology<br>
+- very nice for data exploration, even when having few features (fallen out of favor recently, but remains a powerful technique)
+</smaller>
+
+<div class="notes"><smallest>
+- clustering, dimensionality reduction and nice visualizations at the same time. Preserves the topology, neighbourhood relation kept in latent space <br>
+- the only image in the presentation that was generated using an external tool. Presentation code contains a commented example that produces similar results, but the Peltarion visualization is nicer <br>
+- SOM: mapping each datapoint to a fixed two dimensional grid using an iterative algorithm. Starts with a random initialization (to which the algorithm is sensitive), tries to build neighborhoods: for each cell in the latent space a Best Matching Unit and a radius of the neighborhood get gradually updated, warping this fixed two dimensional grid to the input space. Somehow like throwing a fish net made of elastic such that it best covers the original data <br>
+- grayscale chart is a "unified distance matrix", shows the average distance between the datapoints that ended up in that cell, a measure of crowding <br>
+- the size of the black point: the number of datapoints in the neighborhood, the bigger the black point in the cell, the more points in it <br>
+- heatmaps visualize the average value of each feature in our dataset in this grid. Side-by-side representations can emphasise relations <br>
+- wines and their properties example: there's little overlapping between the high values in the bottom-right Quality feature and high values in ResidualSugar feature on the middle-left. Linear regression could tell that also, but SOMs make it easier to see relations <br>
+- by the size of the black dots we can estimate that a lot of the wines that were labeled as having lowest quality have pretty high volatile acidity
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="70%",eval=FALSE}
+library(RColorBrewer)
+library(kohonen)
+
+w <- read.csv("winequality-red.csv")
+
+set.seed(123)
+
+som_grid <- somgrid(xdim=15, ydim=15, topo="hexagonal")
+sd <- as.matrix(w[,2:ncol(w)])
+sd <- sd[complete.cases(sd),]
+sm <- som(sd, grid=som_grid, rlen=500, alpha=c(0.05,0.01), keep.data=TRUE)
+
+sc <- cutree(hclust(dist(sm$codes[[1]])), 8)
+pal <- brewer.pal(n=8, name="Accent")[sc]
+coolBlueHotRed <- function(n, alpha = 1) {rainbow(n, end=4/6, alpha=alpha)[n:1]}
+
+
+old.par <- par(mfrow=c(3,5), oma=c(0,0,0,0), mar=c(0, 0, 0, 0))
+
+plot(sm, type="mapping", bgcol=pal, main="") #clusters
+add.cluster.boundaries(sm, sc)
+
+plot(sm, type="dist.neighbours", main="") #distances
+
+for (var in colnames(sd)) {
+  var_unscaled <- aggregate(as.numeric(sd[,var]), by=list(sm$unit.classif), FUN=mean, simplify=TRUE)[,2]
+  plot(sm, "property", property=var_unscaled, main=var, palette.name=coolBlueHotRed)
+}
+
+par(old.par)
+```
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="70%"}
+library(png)
+library(grid)
+
+grid.raster(readPNG("wines.png"))
+```
+
+<smallest>Visualization done with Peltarion Synapse (unfortunately discontinued), still available as an online platform</smallest>
+
+
+## Autoencoders
+
+<smaller>
+- easy to implement, harder to interpret<br>
+- all tunings of neural networks apply to autoencoders: topology, cost function, type of layers, type of cells, type of activation functions, number of nodes, regularization, skip connections, dropout/dropconnect, optimizers, network initialization <br>
+- use convolutions when there is some spatial relation, [maybe] recurrent networks for time-series <br>
+</smaller>
+
+<div class="notes"><smallest>
+- this slide shows the actual activity of a single layer autoencoder which learns to represent in 2 variables a linear relation between the inputs. Given these 2 values, the decoder is able to reconstruct the input<br>
+- components: an encoder, that transforms the inputs to a different representation of the data, the latent layer which holds that representation, and the decoder which reconstructs the inputs as good as possible. <br>
+- reconstruction error metric to use: it depends on the distribution of your data, but it's common to use the mean squared error and pre-process your input data using scaling, box-cox power transform or logarithmation <br>
+- all neural nets tunings apply to autoencoders. Including transfer learning, warming up classification networks with autoencoders or vice-versa <br>
+- the AE will store knowledge about the problem, allowing a representation that should help find structure in the data and allow simpler representations of it <br>
+- a myriad of variants of autoencoders, we'll briefly take a look at few variants <br>
+- applying an autoencoder is an easy solution when you don't know or don't care about the structure of the inputs and we don't mind too much about interpretability of your mappings <br>
+- this "interpretability" and "disentanglement" of underlying factors is a nice area where there's a lot of research happening
+</smallest></div>
+
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,echo=FALSE,results='hide'}
+library(ggplot2)
+library(ggpubr)
+library(animation)
+library(h2o)
+
+h2o.no_progress()
+h2o.init()
+
+set.seed(1234)
+
+dim <- 10
+cnt <- 1000
+
+hue_max <- 4 + cos(0.5*seq(cnt)*pi/180) + seq(cnt)/800
+hue_min <- 1 + sin(seq(cnt)*pi/180)
+sc <- max(hue_max) - min(hue_min)
+hue_max <- (0.2 + hue_max - min(hue_min)) / (sc + 4)
+hue_min <- (0.2 + hue_min - min(hue_min)) / (sc + 4)
+
+orig_inputs <- ggplot() + geom_line(aes(x=seq(length(hue_min)), y=hue_min), col="tomato1") + geom_line(aes(x=seq(length(hue_min)), y=hue_max), col="dodgerblue") + theme_l() + xlab("sample") + ylab("hue") + ggtitle("Signal")
+
+orig_rel <- ggplot() + geom_point(aes(x=hue_min,y=hue_max), col="dodgerblue", size=1) + theme_l()+ ylab("max hue") +  xlab("min hue") + ggtitle("Signal")
+
+m <- NULL
+data <- NULL
+for (i in seq(cnt)) {
+  v <- seq(hue_min[i], hue_max[i], (hue_max[i] - hue_min[i]) / (dim - 1))
+  data <- rbind(data, v)
+  #m <- rbind(m, data.frame(x=rep(i, dim), y=seq(dim), value=hsv(v, 0.15, 0.8)))
+  #m <- rbind(m, data.frame(x=rep(i, dim), y=seq(dim), value=rainbow_hcl(dim, start=round(360*hue_min[i]), end=round(360*hue_max[i]))))
+  m <- rbind(m, data.frame(x=rep(i, dim), y=seq(dim), value=rainbow(dim, s=1, v=1, start=hue_min[i], end=hue_max[i])))
+  #colorRampPalette(rainbow(dim, s=0.6, v=1, start=hue_min[i], end=hue_max[i]), interpolate="spline")(1000)
+}
+
+
+hdf <- as.h2o(data)
+dl <- h2o.deeplearning(x=1:ncol(hdf), training_frame=hdf, autoencoder=TRUE, hidden=c(2), activation="Tanh", epochs=100, seed=12345, reproducible=TRUE, train_samples_per_iteration=1, score_each_iteration=T)
+hfeatures <- h2o.deepfeatures(dl, hdf, layer=1)
+f <- as.data.frame(hfeatures)
+
+ae_inputs <- ggplot(f) + geom_line(aes(x=seq(nrow(f)), y=1-DF.L1.C1), col="dodgerblue") + geom_line(aes(x=seq(nrow(f)), y=1-DF.L1.C2), col="tomato1") + theme_l() + xlab("sample") + ylab("activation") + ggtitle("AE")
+
+ae_rel <- ggplot(f) + geom_point(aes(y=1-DF.L1.C1,x=1-DF.L1.C2), col="dodgerblue", size=1) + theme_l() + ylab("Cell 1") +  xlab("Cell 2") + ggtitle("AE")
+
+
+```
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,echo=FALSE,results='hide',cache=TRUE}
+library(h2o)
+library(colorspace)
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+
+set.seed(1234)
+
+dim <- 150
+cnt <- 1000
+
+hue_max <- 4 + cos(0.5*seq(cnt)*pi/180) + seq(cnt)/800
+hue_min <- 1 + sin(seq(cnt)*pi/180)
+sc <- max(hue_max) - min(hue_min)
+hue_max <- (0.2 + hue_max - min(hue_min)) / (sc + 4)
+hue_min <- (0.2 + hue_min - min(hue_min)) / (sc + 4)
+
+orig_inputs <- ggplot() + geom_line(aes(x=seq(length(hue_min)), y=hue_min), col="tomato1") + geom_line(aes(x=seq(length(hue_min)), y=hue_max), col="dodgerblue") + theme_l() + xlab("sample") + ylab("hue") + ggtitle("Signal")
+
+orig_rel <- ggplot() + geom_point(aes(x=hue_min,y=hue_max), col="dodgerblue", size=1) + theme_l()+ ylab("max hue") +  xlab("min hue") + ggtitle("Signal")
+
+m <- NULL
+data <- NULL
+for (i in seq(cnt)) {
+  v <- seq(hue_min[i], hue_max[i], (hue_max[i] - hue_min[i]) / (dim - 1))
+  data <- rbind(data, v)
+  #m <- rbind(m, data.frame(x=rep(i, dim), y=seq(dim), value=hsv(v, 0.15, 0.8)))
+  #m <- rbind(m, data.frame(x=rep(i, dim), y=seq(dim), value=rainbow_hcl(dim, start=round(360*hue_min[i]), end=round(360*hue_max[i]))))
+  m <- rbind(m, data.frame(x=rep(i, dim), y=seq(dim), value=rainbow(dim, s=1, v=1, start=hue_min[i], end=hue_max[i])))
+  #colorRampPalette(rainbow(dim, s=0.6, v=1, start=hue_min[i], end=hue_max[i]), interpolate="spline")(1000)
+}
+
+hdf <- as.h2o(data)
+dl <- h2o.deeplearning(x=1:ncol(hdf), training_frame=hdf, autoencoder=TRUE, hidden=c(2), activation="Tanh", epochs=100, seed=12345, reproducible=TRUE, export_weights_and_biases=TRUE)
+hfeatures <- h2o.deepfeatures(dl, hdf, layer=1)
+f <- as.data.frame(hfeatures)
+
+ae_inputs <- ggplot(f) + geom_line(aes(x=seq(nrow(f)), y=1-DF.L1.C1), col="dodgerblue") + geom_line(aes(x=seq(nrow(f)), y=1-DF.L1.C2), col="tomato1") + theme_l() + xlab("sample") + ylab("activation") + ggtitle("AE")
+
+ae_rel <- ggplot(f) + geom_point(aes(y=1-DF.L1.C1,x=1-DF.L1.C2), col="dodgerblue", size=1) + theme_l() + ylab("Cell 1") +  xlab("Cell 2") + ggtitle("AE")
+```
+
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,echo=FALSE,results='hide',cache=TRUE,out.width="80%"}
+library(png)
+library(raster)
+library(broman)
+library(magick)
+
+#plot(as.raster(matrix(m$value, nrow=dim)), ylim=c(dim,1))
+
+r <- hex2dec(substr(m$value, 2, 3)) / 255
+g <- hex2dec(substr(m$value, 4, 5)) / 255
+b <- hex2dec(substr(m$value, 6, 7)) / 255
+
+d <- array(cbind(r, g, b), dim=c(dim,cnt,3))
+writePNG(d, "ae-inputs.png")
+
+i <- image_read("ae-inputs.png")
+i <- image_transparent(i, 'white')
+image_write(image_flip(i), path="ae-inputs.png", format="png")
+```
+
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,echo=FALSE,results='hide',cache=TRUE}
+library(animation)
+library(NeuralNetTools)
+library(magick)
+
+subset <- seq(1,ncol(hdf), 20)
+
+bias <- T
+ninputs <- length(subset)
+nhidden <- 2
+weights <- runif((ninputs+bias)*nhidden + (nhidden+bias)*ninputs)
+
+w1 <- as.matrix(h2o.weights(dl, 1))[,subset]
+b1 <- as.matrix(h2o.biases(dl, 1))
+w2 <- as.matrix(h2o.weights(dl, 2))[subset,]
+b2 <- as.matrix(h2o.biases(dl, 2))[subset]
+w <- c(as.vector(b1), as.vector(w1), as.vector(b2), as.vector(w2))
+
+df <- as.matrix(hdf)[,subset]
+act <- as.matrix(h2o.deepfeatures(dl, hdf, layer=1))
+out <- as.matrix(h2o.deepfeatures(dl, hdf, layer=0))[,subset] #output
+
+fname <- 'ae-activity.gif'
+saveGIF({
+  for (row in seq(1, nrow(data), 5)) {
+    val <- c(df[row,], act[row,], out[row,])
+
+    cols <- sapply(val, function(x) { hsv(max(x, 0), 1, 1)})
+    plotnet(w, struct=c(ninputs, nhidden, ninputs), bias=bias, alpha_val=.1, cex_val=1, var_labs=F, circle_col=cols)
+  }
+}, movie.name=fname, interval=0.05)
+
+a <- image_animate(image_transparent(image_read(fname), 'white'), dispose="previous")
+image_write(a, fname)
+
+```
+
+![](ae-activity.gif)
+
+
+## Autoencoders
+
+<smaller>
+- sample with highly correlated input features: hue coding with a simple one layer autoencoder <br>
+- 150 input features, 1000 samples
+</smaller>
+
+<div class="notes"><smallest>
+- the input data that was passed to the autoencoder you've seen in the previous slide. The inputs given are the columns in the image above, 150 varibles which have a linear relation between them. We create a rainbow between two hue values, so we have equally spaced values in some intervals, and we have one thousand such vectors <br>
+- the limits of the interval are varying and were generated them from two sinusoidal functions which you can see on bottom-left. These are our generating factors, we have a process that generates our input data from just these two values <br>
+- the bottom-right image you can see the interaction of those two factors, how the generating factors change one in relation with the other
+</smallest></div>
+
+
+
+![](ae-inputs.png)
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,echo=FALSE,results='hide',cache=TRUE,out.width="50%"}
+library(gridExtra)
+
+grid.arrange(orig_inputs, orig_rel, ncol=2, respect=TRUE)
+```
+
+## Autoencoders vs PCA vs ICA
+
+<smaller>
+- autoencoders are better at recovering the original features and the interaction between them <br>
+- why not always use autoencoders? sample size needed, overfitting dangers, lots of tuning needed, interpretability
+</smaller>
+
+<div class="notes"><smallest>
+- what we get when applying different methods on that input data. The data is not noisy and it's well structured, recovering the signal should be easy <br>
+- in the top-left corner you have the original signal and the interaction between the generating factors <br>
+- in the top-right corner you have what PCA recovered and the plot with the interaction between the first two principal components. PCA recovered the sinusoidal nature of the signal and a rotation of the interaction, but likely because our data is heteroskedastic what we have is not our generating factors <br>
+- bottom-left chart is the ICA result, which recovered pretty well the interaction of the generating factors, but the factors themselves are again not close to the originals. They still have the sinusoidal nature, but they lost one of their properties which was that their variability was constant over time <br>
+- the bottom-right corner shows the reconstructions from the shallow AE, which caught the nature of the generating factors and the interaction <br>
+- there is no good or wrong dimensionality reduction, they just extract different things from the signal. Try different algorithms<br>
+- shallow linear AE work almost as PCA, but they extract vectors are not orthogonal and variance tends to be equally distributed across latent variables <br>
+- always try visualizing what your network learns. Here we have one chart showing the activations plotted against the sample index, and one chart is showing the activations in the first node in the latent layer plotted against the activations in the second node (just like we plotted for PCA and ICA the projections on the first component against the projection on the second component)
+</smallest></div>
+
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,echo=FALSE,results='hide',cache=TRUE,out.width="75%"}
+library(h2o)
+library(colorspace)
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+library(ica)
+
+set.seed(1234)
+
+pc <- prcomp(data, center=TRUE, scale.=FALSE)
+d <- as.data.frame(pc$x)
+colnames(d) <- c("PC1", "PC2")
+
+pca_inputs <- ggplot(d) + geom_line(aes(x=seq(nrow(f)), y=1-PC1), col="dodgerblue") + geom_line(aes(x=seq(nrow(f)), y=1-PC2), col="tomato1") + theme_l() + xlab("") + ylab("") + ggtitle("PCA")
+
+pca_rel <- ggplot(d) + geom_point(aes(y=1-PC1,x=1-PC2), col="dodgerblue", size=1) + theme_l() + ylab("PC1") +  xlab("PC2") + ggtitle("PCA")
+
+ic <- icafast(data, nc=2, center=FALSE)
+
+d <- as.data.frame(ic$S)
+colnames(d) <- c("IC1", "IC2")
+
+ica_inputs <- ggplot(d) + geom_line(aes(x=seq(nrow(f)), y=1-IC1), col="dodgerblue") + geom_line(aes(x=seq(nrow(f)), y=1-IC2), col="tomato1") + theme_l() + xlab("") + ylab("") + ggtitle("ICA")
+
+ica_rel <- ggplot(d) + geom_point(aes(y=1-IC1,x=1-IC2), col="dodgerblue", size=1) + theme_l() + ylab("IC1") +  xlab("IC2") + ggtitle("ICA")
+
+grid.arrange(orig_inputs, orig_rel, pca_inputs, pca_rel, ica_inputs, ica_rel, ae_inputs, ae_rel, ncol=4, respect=TRUE)
+```
+
+
+## Deep Autoencoders
+
+<smaller>
+- multiple layers, usually with a symmetric hourglass topology <br>
+- latent layer in the middle
+</smaller>
+
+
+<div class="notes"><smallest>
+- back to the concentric circles and the S-shape datasets and show the results of running a deep AE on them. A deep AE is just a network with multiple layers, usually (but not necessarily) in an hourglass shape with the number of cells per layer gradually decreasing until the latent layer, then gradually increasing in a symmetric fashion until the output layer <br>
+- top row shows how using AE we can expand the representation from 2D to 3D, hoping for better data separation, so we can use them to increase dimensionality if that explains the data better <br>
+- easy solution when you don't know or don't care about the structure of the inputs. lots of data: AE, less data: go with "traditional" robust techniques <br>
+- work best with lots of data: check the number of parameters. Experiment with activations, sometimes ReLu not suitable, replace with LeakyReLU, Tanh, ELU, sigmoid. Can be sensitive to initial conditions (and to a lot of parametrizations) <br>
+- fast convergence using optimizers like adam/Nadam (shallow networks have usable results after ~15 epochs) <br>
+- can be used as warmup for other classifier networks (and the other way around). A network that is able to condense the data should, in theory, classify better. However, beware of smoothing/averaging - details can be lost. Side note: ensembles work better most of the time)
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="75%"}
+library(h2o)
+
+set.seed(1234)
+
+c <- read.csv("test_data2.csv", stringsAsFactors=F)
+c$group <- as.factor(c$group)
+
+hdf <- as.h2o(c[,1:3])
+
+dl <- h2o.deeplearning(x=1:ncol(hdf), training_frame=hdf, autoencoder=TRUE, hidden=c(50, 15, 3, 15, 50), activation="Tanh", epochs=100, seed=12345, reproducible=TRUE, input_dropout_ratio=0.2)
+hfeatures <- h2o.deepfeatures(dl, hdf, layer=3)
+pdc <- as.data.frame(hfeatures)
+activations_ae1 <- sort(as.vector(unlist(pdc)))
+
+
+s <- read.csv("test_data_s.csv")
+hdf <- as.h2o(s[,1:3])
+
+dl <- h2o.deeplearning(x=1:ncol(hdf), training_frame=hdf, autoencoder=TRUE, hidden=c(50, 15, 3, 15, 50), activation="Tanh", epochs=100, seed=12345, reproducible=TRUE, input_dropout_ratio=0.2)
+hfeatures <- h2o.deepfeatures(dl, hdf, layer=3)
+pds <- as.data.frame(hfeatures)
+activations_ae2 <- sort(as.vector(unlist(pds)))
+
+
+p1 <- ggplot(c, aes(x=x, y=y, col=group)) + geom_point(size=1) + theme_l() + theme(legend.position = "none", aspect.ratio=1) + labs(title="Dataset 1") + xlab("") + ylab("")
+
+p2 <- ggplot(c, aes(x=pdc$DF.L3.C1, y=pdc$DF.L3.C3, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Node 1 vs 3") + xlab("") + ylab("")
+
+p3 <- ggplot(c, aes(x=pdc$DF.L3.C2, y=pdc$DF.L3.C3, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Node 2 vs 3") + xlab("") + ylab("")
+
+p4 <- ggplot(s, aes(x=x, y=y, col=group)) + geom_point(size=1) + theme_l() + theme(legend.position = "none", aspect.ratio=1) + labs(title="Dataset 1") + xlab("") + ylab("")
+
+p5 <- ggplot(s, aes(x=pds$DF.L3.C1, y=pds$DF.L3.C3, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Node 1 vs 3") + xlab("") + ylab("")
+
+p6 <- ggplot(s, aes(x=pds$DF.L3.C2, y=pds$DF.L3.C3, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Node 2 vs 3") + xlab("") + ylab("")
+
+grid.arrange(p1, p2, p3, p4, p5, p6, ncol=3, respect=TRUE)
+```
+
+## Sparse Autoencoders
+
+<smaller>
+- adds a penalty for multiple activations <br>
+- reconstruction results will be similar, the difference is in the sparsity of activations and, thus, robustness and interpretability<br>
+- theoretically forces better data separation by repelling different samples in the latent space
+</smaller>
+
+<div class="notes"><smallest>
+- adds sparsity constraints. Add a penalty term to force only few cells to be activated. This encourages learning of different features by different neurons <br>
+- this can be combined with shallow or deep autoencoders. Slide example is a sparse deep autoencoder <br>
+- the fact that sparse activations are encouraged are visible in the charts, you can see in the "Node vs node" charts how the points are spread closer tot the axis <br>
+- the distribution of activations in the rightmost charts: with red are the sorted average activations in the latent layer for the autoencoder from the previous slide and with blue the activations of the sparse autoencoder. By the shape of the S curve you see that the sparse autoencoder has a tendency of being under or over activated when compared with a regular one <br>
+- can be also combined with convolutional layers or recurrent cells
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="75%"}
+library(h2o)
+
+set.seed(1234)
+
+c <- read.csv("test_data2.csv", stringsAsFactors=F)
+c$group <- as.factor(c$group)
+hdf <- as.h2o(c[,1:3])
+
+dl <- h2o.deeplearning(x=1:ncol(hdf), training_frame=hdf, autoencoder=TRUE, hidden=c(50, 25, 3, 25, 50), activation="Tanh", epochs=100, seed=1234, reproducible=TRUE, sparse=TRUE, average_activation=0.1, sparsity_beta=1.75)
+hfeatures <- h2o.deepfeatures(dl, hdf, layer=3)
+pdc <- as.data.frame(hfeatures)
+activations_sae1 <- sort(as.vector(unlist(pdc)))
+
+
+s <- read.csv("test_data_s.csv")
+hdf <- as.h2o(s[,1:3])
+
+dl <- h2o.deeplearning(x=1:ncol(hdf), training_frame=hdf, autoencoder=TRUE, hidden=c(50, 15, 3, 15, 50), activation="Tanh", epochs=100, seed=1234, reproducible=TRUE, sparse=TRUE, average_activation=0.1, sparsity_beta=1.75)
+hfeatures <- h2o.deepfeatures(dl, hdf, layer=3)
+pds <- as.data.frame(hfeatures)
+activations_sae2 <- sort(as.vector(unlist(pds)))
+
+act1 <- data.frame(ae=activations_ae1, sae=activations_sae1, idx=seq(length(activations_ae1)))
+act2 <- data.frame(ae=activations_ae2, sae=activations_sae2, idx=seq(length(activations_ae2)))
+
+
+p1 <- ggplot(c, aes(x=x, y=y, col=group)) + geom_point(size=1) + theme_l() + theme(legend.position="none", aspect.ratio=1) + labs(title="Dataset 1") + xlab("") + ylab("")
+
+p2 <- ggplot(c, aes(x=pdc$DF.L3.C1, y=pdc$DF.L3.C3, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Node 1 vs 3") + xlab("") + ylab("")
+
+p3 <- ggplot(c, aes(x=pdc$DF.L3.C2, y=pdc$DF.L3.C3, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Node 2 vs 3") + xlab("") + ylab("")
+
+p4 <- ggplot(s, aes(x=x, y=y, col=group)) + geom_point(size=1) + theme_l() + theme(legend.position="none", aspect.ratio=1) + labs(title="Dataset 1") + xlab("") + ylab("")
+
+p5 <- ggplot(s, aes(x=pds$DF.L3.C1, y=pds$DF.L3.C3, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Node 1 vs 3") + xlab("") + ylab("")
+
+p6 <- ggplot(s, aes(x=pds$DF.L3.C2, y=pds$DF.L3.C3, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Node 2 vs 3") + xlab("") + ylab("")
+
+pact1 <- ggplot(act1, aes(idx)) +  geom_line(aes(y=ae, colour="AE")) + geom_line(aes(y=sae, colour="Sparse AE")) + theme_l() + theme(legend.position="none",aspect.ratio=1) + ylab("") + xlab("") + labs(title="Activations")
+
+pact2 <- ggplot(act2, aes(idx)) +  geom_line(aes(y=ae, colour="AE")) + geom_line(aes(y=sae, colour="Sparse AE")) + theme_l() + theme(legend.position="none",aspect.ratio=1) + ylab("") + xlab("") + labs(title="Activations")
+
+
+grid.arrange(p1, p2, p3, pact1, p4, p5, p6, pact2, ncol=4, respect=TRUE)
+
+```
+
+## Stacked Autoencoders
+
+<smaller>
+- chaining encoders and decoders, can be seen as a series of resampling downward/upward<br>
+</smaller>
+
+<div class="notes"><smallest>
+- instead of having an hourglass shaped deep autoencoder, we train multiple autoencoders, each one separately, and the output of one becomes the input of the next one <br>
+- chain autoencoders and take as the reduced representation the latent layer of the encoder in the middle <br>
+- compared with a deep autoencoder: we have this constraint of being able to reconstruct the outputs at each level <br>
+- can be seen as a series of resampling of the data, downwards when encoding and upwards when decoding <br>
+- it should encourage better representations, but at the same time there's a trade-off because errors accumulate with every stacked model <br>
+- can be combined with all other techniques, like sparsity constraints or denoising for robustness
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="70%"}
+library(h2o)
+
+set.seed(1234)
+
+c <- read.csv("test_data2.csv", stringsAsFactors=F)
+c$group <- as.factor(c$group)
+hdf <- as.h2o(c[,1:3])
+
+dl1 <- h2o.deeplearning(x=1:ncol(hdf), training_frame=hdf, autoencoder=TRUE, hidden=c(50), activation="Tanh", epochs=100, seed=12345, reproducible=TRUE, input_dropout_ratio=0.1)
+hfeatures_50 <- h2o.deepfeatures(dl1, hdf, layer=1)
+
+dl2 <- h2o.deeplearning(x=1:ncol(hfeatures_50), training_frame=hfeatures_50, autoencoder=TRUE, hidden=c(15), activation="Tanh", epochs=100, seed=12345, reproducible=TRUE, input_dropout_ratio=0.1)
+hfeatures_15 <- h2o.deepfeatures(dl2, hfeatures_50, layer=1)
+
+dl3 <- h2o.deeplearning(x=1:ncol(hfeatures_15), training_frame=hfeatures_15, autoencoder=TRUE, hidden=c(3), activation="Tanh", epochs=100, seed=12345, reproducible=TRUE, input_dropout_ratio=0.1)
+hfeatures_3 <- h2o.deepfeatures(dl3, hfeatures_15, layer=1)
+
+pdc <- as.data.frame(hfeatures_3)
+
+p1 <- ggplot(c, aes(x=x, y=y, col=group)) + geom_point(size=1) + theme_l() + theme(legend.position="none", aspect.ratio=1) + labs(title="Dataset 1") + xlab("") + ylab("")
+
+p2 <- ggplot(c, aes(x=pdc$DF.L1.C1, y=pdc$DF.L1.C3, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Node 1 vs 3") + xlab("") + ylab("")
+
+p3 <- ggplot(c, aes(x=pdc$DF.L1.C2, y=pdc$DF.L1.C3, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Node 2 vs 3") + xlab("") + ylab("")
+
+
+s <- read.csv("test_data_s.csv")
+hdf <- as.h2o(s[,1:3])
+
+dl1 <- h2o.deeplearning(x=1:ncol(hdf), training_frame=hdf, autoencoder=TRUE, hidden=c(50), activation="Tanh", epochs=100, seed=12345, reproducible=TRUE, input_dropout_ratio=0.1)
+
+dl2 <- h2o.deeplearning(x=1:ncol(hfeatures_50), training_frame=hfeatures_50, autoencoder=TRUE, hidden=c(15), activation="Tanh", epochs=100, seed=12345, reproducible=TRUE, input_dropout_ratio=0.1)
+
+dl3 <- h2o.deeplearning(x=1:ncol(hfeatures_15), training_frame=hfeatures_15, autoencoder=TRUE, hidden=c(3), activation="Tanh", epochs=100, seed=12345, reproducible=TRUE, input_dropout_ratio=0.1)
+
+hfeatures_50 <- h2o.deepfeatures(dl1, hdf, layer=1)
+hfeatures_15 <- h2o.deepfeatures(dl2, hfeatures_50, layer=1)
+hfeatures_3 <- h2o.deepfeatures(dl3, hfeatures_15, layer=1)
+
+pds <- as.data.frame(hfeatures_3)
+
+p4 <- ggplot(s, aes(x=x, y=y, col=group)) + geom_point(size=1) + theme_l() + theme(legend.position="none", aspect.ratio=1) + labs(title="Dataset 1") + xlab("") + ylab("")
+
+p5 <- ggplot(s, aes(x=pds$DF.L1.C1, y=pds$DF.L1.C3, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Node 1 vs 3") + xlab("") + ylab("")
+
+p6 <- ggplot(s, aes(x=pds$DF.L1.C2, y=pds$DF.L1.C3, col=group)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Node 2 vs 3") + xlab("") + ylab("")
+
+grid.arrange(p1, p2, p3, p4, p5, p6, ncol=3, respect=TRUE)
+
+```
+
+## Denoising Autoencoders
+
+<smaller>
+- based on a simple data augmentation trick: add noise to inputs while keeping the originals as output<br>
+- increased robustness <br>
+- projections sample is for MNIST
+</smaller>
+
+<div class="notes"><smallest>
+- simple trick that's also common for data augmentation: we adds noise to the inputs when training, while we expect to reconstruct the clean version<br>
+- increases the robustness of the model, it becomes less sensitive to noise and theoretically learns better representations of the data <br>
+- example is for a shallow denoising autoencoder trained on the MNIST dataset and trained 3 cells in the latent layer, and i feed the digits to the network as vectors of 784 values from 0 to 1. Each digit from 0 to 9 has a different color. We have a single layer and no convolutions: the autoencoder is separating the digit classes <br>
+- note: we also see from this chart that the activations tend to have this diagonal form, which means that the cells activations are correlated. In other words, they fire up together, which is generally not such a good thing, because we would like, as much as possible, to have our autoencoders discover independent factors. Changing the activation function or adding sparsity constraints might help <br>
+- another trick, which i haven't used here and some people deploy to improve learning is to drop parts of the input and force the autoencoder to reconstruct the full input, basically forcing signal recovery from partial measurements <br>
+- AE samples are quite shallow, better results can be obtained when working with images by adding convolutional layers
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="80%"}
+library(ggplot2)
+library(ggpubr)
+library(plot3D)
+library(RColorBrewer)
+library(gridExtra)
+library(animation)
+library(rerf)
+
+
+act <- read.csv("outputs/denoising_mnist_activations.csv", header=F)
+cls <- read.csv("outputs/denoising_mnist_classes.csv", header=F)
+
+c <- as.factor(cls$V1)
+colors <- brewer.pal(n=length(unique(c)), name="Spectral")[c]
+
+p1 <- ggplot(act, aes(x=V1, y=V2, col=colors)) + geom_point(size=.3) + theme_l() + theme(aspect.ratio=1) + theme(legend.position = "none")
+p2 <- ggplot(act, aes(x=V1, y=V3, col=colors)) + geom_point(size=.3) + theme_l() + theme(aspect.ratio=1) + theme(legend.position = "none")
+p3 <- ggplot(act, aes(x=V2, y=V3, col=colors)) + geom_point(size=.3) + theme_l() + theme(aspect.ratio=1) + theme(legend.position = "none")
+
+grid.arrange(p1, p2, p3, ncol=3, respect=TRUE)
+
+```
+
+
+
+## Contractive Autoencoders
+
+<smaller>
+- a type of regularized autoencoders<br>
+- only the loss function differs, it will penalize sensitivity of latent activations to inputs<br>
+- can be combined with other types (sample projection is for denoising-contractive AE)
+</smaller>
+
+<div class="notes"><smallest>
+- in addition to the reconstruction loss we add a regularization term (the contractive loss) which is forcing our autoencoder to penalize the sensitivity of the latent representation to variation in the inputs <br>
+- we look at the outputs of the cells in the middle layer and we add a term to the loss to make it's less sensitive if the inputs are a bit changed <br>
+- example applies the contractive loss to the denoising autoencoder you've seen in the previous slide and now we have a nicer representation of the data with fewer co-activations of the cells in the latent layer <br>
+- AE becomes robustness to small variations in the data
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="80%"}
+library(ggplot2)
+library(ggpubr)
+library(plot3D)
+library(RColorBrewer)
+library(gridExtra)
+library(animation)
+
+act <- read.csv("outputs/contractive_mnist_activations.csv", header=F)
+cls <- read.csv("outputs/contractive_mnist_classes.csv", header=F)
+
+c <- as.factor(cls$V1)
+colors <- brewer.pal(n=length(unique(c)), name="Spectral")[c]
+
+p1 <- ggplot(act, aes(x=V1, y=V2, col=colors)) + geom_point(size=.3) + theme_l() + theme(aspect.ratio=1) + theme(legend.position = "none")
+p2 <- ggplot(act, aes(x=V1, y=V3, col=colors)) + geom_point(size=.3) + theme_l() + theme(aspect.ratio=1) + theme(legend.position = "none")
+p3 <- ggplot(act, aes(x=V2, y=V3, col=colors)) + geom_point(size=.3) + theme_l() + theme(aspect.ratio=1) + theme(legend.position = "none")
+
+grid.arrange(p1, p2, p3, ncol=3, respect=TRUE)
+```
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,results='hide'}
+library(plot3D)
+library(animation)
+library(magick)
+
+fname <- 'contractive-act.gif'
+saveGIF({
+    for(i in seq(1, 360, 3)) {
+        f <- cls == floor(i/36)
+        scatter3D(act$V1[f], act$V2[f], act$V3[f], pch=20, cex=.75, theta=i, ticktype="detailed", col=colors[f], xlab="x", ylab="y", zlab="z", colkey=F)
+    }
+}, movie.name=fname, interval=0.2)
+
+a <- image_animate(image_transparent(image_read(fname), 'white'), dispose="previous")
+image_write(a, fname)
+
+```
+
+
+## Variational Autoencoders (VAE)
+
+<smaller>
+- variational autoencoders - discovering latent factors via variational inference <br>
+- latent space is special, stores probability distributions (for each dimension a mean and a standard deviation is kept). Decoder samples from a normal distribution in the latent layer. The "reparametrization trick" allows the autoencoder to backpropagate <br>
+- semi-supervised extension: cVAE<footnote>https://arxiv.org/abs/1406.5298</footnote>
+</smaller>
+
+<div class="notes"><smallest>
+- finally got to the most interesting class of autoencoders: the ones that do variational inference, a method of approximating probability densities <br>
+- in the charts above we have the activations of the 3 cells in the latent layer of a variational autoencoder with dense connections and an intermediate layer of 50 cells. So we have just 50 cells plus our latent layer and we input raw pixel data, without having any convolutions <br>
+- best data separation from the autoencoders presented so far, some classes are close to have bivariate normal representation, meaning that our network learns factors which are close to independent random variables <br>
+- how do these variational autoencoders work: their latent space is special, instead of keeping a value like regular autoencoders, they keep probability distributions. So for every latent dimension we actually keep two values, one with a mean and one with a standard deviation (encoder is an inference network) <br>
+- in addition to the reconstruction loss (the negative log likelihood), we have a special KLD term which encourages the gaussianity of the latent variables <br>
+- this has a side effect for example that we end up having representations of various rotations of the digit 7 close one to another in the latent space. Or makes 8 more likely to be close to 6 and 9. We assume the latent data manifold has representations normally distributed <br>
+- VAE is a variational lower bound estimator, maximizing encodings PDF area under an assumption of a normally distributed latent manifold. At decoding time we're Monte Carlo sampling from the normal distributions in the latent layer, then backpropagate the error. "Reparametrization trick" to allow differentiation
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="80%"}
+library(plot3D)
+library(RColorBrewer)
+library(animation)
+
+act <- read.csv("outputs/vae_mnist_activations-1.csv", header=F)
+cls <- read.csv("outputs/vae_mnist_classes-1.csv", header=F)
+
+c <- as.factor(cls$V1)
+colors <- brewer.pal(n=length(unique(c)), name="Spectral")[c]
+
+p1 <- ggplot(act, aes(x=V1, y=V2, col=colors)) + geom_point(size=.3) + theme_l() + theme(aspect.ratio=1) + theme(legend.position = "none")
+p2 <- ggplot(act, aes(x=V1, y=V3, col=colors)) + geom_point(size=.3) + theme_l() + theme(aspect.ratio=1) + theme(legend.position = "none")
+p3 <- ggplot(act, aes(x=V2, y=V3, col=colors)) + geom_point(size=.3) + theme_l() + theme(aspect.ratio=1) + theme(legend.position = "none")
+
+grid.arrange(p1, p2, p3, ncol=3, respect=TRUE)
+```
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,results='hide'}
+library(plot3D)
+library(animation)
+library(magick)
+
+fname <- 'vae-act.gif'
+saveGIF({
+    for(i in seq(1, 360, 3)) {
+        dig <- floor(i/36)
+        f <- cls == dig
+        sc <- scatter3D(act$V1[f], act$V2[f], act$V3[f], pch=20, cex=.75, theta=i, ticktype="detailed", col=colors[f], xlab="x", ylab="y", zlab="z", colkey=F)
+        text(-0.4, -0.4, dig, cex=3, col="red")
+    }
+}, movie.name=fname, interval=0.2)
+
+a <- image_animate(image_transparent(image_read(fname), 'white'), dispose="previous")
+image_write(a, fname)
+
+```
+
+## VAE
+
+<smaller>
+- latent space representation and manifold traversal (note: 2 layers and only 3 (x2) cells in the latent layer)
+</smaller>
+
+<div class="notes"><smallest>
+- on the left we have the MNIST dataset activations of the 3 dimensions in the latent layer. Probably i should have sticked with two dimensional representations, but the data separation increased significantly and it's more visible in 3D <br>
+- what we plot here are the mean values we get in the latent layer when we feed the input values <br>
+- the decoder is a function building the data distribution from a combination of isotropic gaussian factors <br>
+- in the right side: a generative traversal of the latent space. A grid of values from the normal distribution passed to the decoder <br>
+- it should be mentioned again that this is an output from a quite simple dense network, not from a convolutional network <br>
+- notice is that we obtain what we expected, representations of a 7 are close to a 1 or to a deformed 9, or 6 is close to 8 <br>
+- another thing visible is the blurriness of the generated samples. This is because autoencoders in general and variational autoencoders especially have a tendency of learning averaged representations, while generative networks have in their training objective the condition that samples have to look like being from the real distribution<br>
+- adding CNN layers would significantly improve the performance <br>
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,results='hide'}
+library(reshape2)
+library(ggplot2)
+library(ggpubr)
+library(imager)
+library(animation)
+library(magick)
+
+m1 <- NULL
+for (i in seq(0.05, 0.95, 0.02)) {
+  d <- read.csv(paste("outputs/vae_mnist_manifold-1-", i, ".csv", sep=""), header=F)
+  m1  <- rbind(m1, d)
+}
+
+n_mesh <- 15
+image_dim <- 28
+slices <- nrow(m1)/(n_mesh*n_mesh)
+
+to_images <- function(src) {
+  manifold <- NULL
+  for (k in seq(slices)) {
+    mesh <- matrix(nrow=n_mesh*image_dim, ncol=n_mesh*image_dim)
+    for (i in seq(n_mesh)) {
+      for (j in seq(n_mesh)) {
+        dx <- (k-1)*n_mesh*n_mesh
+        mesh[seq(((i-1)*image_dim+1), i*image_dim), seq(((j-1)*image_dim+1), j*image_dim)] <- 255 * unlist(src[dx + (i-1)*n_mesh + j,])
+      }
+    }
+    manifold <- rbind(manifold, as.vector(mesh))
+  }
+  manifold
+}
+
+mimg <- function(data) {
+  im <- as.cimg(data, x=image_dim*n_mesh, y=image_dim*n_mesh)
+  pimg <- ggplot(as.data.frame(im), aes(x,y)) + geom_raster(aes(fill=value)) + scale_y_continuous(trans=scales::reverse_trans()) + scale_fill_gradient(low="white",high="black") + theme_void() + theme(aspect.ratio=1, legend.position="none")
+  print(pimg)
+}
+
+gif <- function(manifold) {
+  lapply(seq(nrow(manifold)), function(i) { mimg(manifold[i,]) })
+}
+
+im <- to_images(m1)
+fname <- "vae-manifold.gif"
+saveGIF(gif(im), interval=.25, movie.name=fname)
+
+a <- image_animate(image_transparent(image_read(fname), 'white'), dispose="previous")
+image_write(a, fname)
+
+```
+
+![](vae-act.gif) ![](vae-manifold.gif)
+
+## beta-VAE
+
+<smaller>
+- beta-VAE<footnote>https://openreview.net/forum?id=Sy2fzU9gl</footnote>: a step towards
+interpretability
+- tries to disentangle the latent factors (in an ideal representation single latent units are sensitive to single generative factors)<br>
+- how beta works: simple multiplication in the VAE objective function, which seems to encourage the latent representation axes to be sensitive to changes in generative factors<footnote>https://arxiv.org/abs/1804.03599</footnote>
+</smaller>
+
+<div class="notes"><smallest>
+- interesting empirical finding for people still try to find a theoretical justification. Some people at DeepMind, probably randomly experimenting, ended up finding that if you simply multiply the KL Divergence term of the VAE loss, you end up with more interpretable factors extracted <br>
+- beta = how much the KLD term matters in the loss function. More weight to the constraint of having normally distributed activations in the latent layer <br>
+- links to the original article and to one that tries to explain why disentanglement happens <br>
+- beta-VAE is building a representation that should still be sufficient to perform reconstruction while imposing a constraint on the amount of information it holds (and the constraint tightens as beta increases) <br>
+- original article: encoding bitmap representations of chairs, certain cells encoded factors like the chair size, the size of the chair back or the leg type <br>
+- a lot of objections to this beta, simply put it cannot be that simple, just multiply by a number and get meaningful factors. And indeed the world proved to be more complex and in a lot of cases the extracted factors were not interpretable <br>
+- improved versions: Total Correlation-VAE decomposes the beta-VAE loss adding a new metric measuring disentanglement based on mutual information. Independent Subspace Analysis-VAE changes the prior distribution of the latent variables, instead forcing gaussianity it allows different types of distribution (remember non-gaussianity optimization in ICA) and can be combined with beta and TC variants. Other promising variants in the references
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="80%"}
+library(plot3D)
+library(RColorBrewer)
+library(animation)
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+
+act <- read.csv("outputs/vae_mnist_activations-4.csv", header=F)
+cls <- read.csv("outputs/vae_mnist_classes-4.csv", header=F)
+
+c <- as.factor(cls$V1)
+colors <- brewer.pal(n=length(unique(c)), name="Spectral")[c]
+
+p1 <- ggplot(act, aes(x=V1, y=V2, col=colors)) + geom_point(size=.3) + theme_l() + theme(aspect.ratio=1) + theme(legend.position = "none")
+p2 <- ggplot(act, aes(x=V1, y=V3, col=colors)) + geom_point(size=.3) + theme_l() + theme(aspect.ratio=1) + theme(legend.position = "none")
+p3 <- ggplot(act, aes(x=V2, y=V3, col=colors)) + geom_point(size=.3) + theme_l() + theme(aspect.ratio=1) + theme(legend.position = "none")
+
+grid.arrange(p1, p2, p3, ncol=3, respect=TRUE)
+```
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,results='hide'}
+library(plot3D)
+library(animation)
+library(magick)
+
+fname <- 'beta-vae-act.gif'
+saveGIF({
+    for(i in seq(1, 360, 3)) {
+        dig <- floor(i/36)
+        f <- cls == dig
+        sc <- scatter3D(act$V1[f], act$V2[f], act$V3[f], pch=20, cex=.75, theta=i, ticktype="detailed", col=colors[f], xlab="x", ylab="y", zlab="z", colkey=F)
+        text(-0.4, -0.4, dig, cex=3, col="red")
+    }
+}, movie.name=fname, interval=0.2)
+
+a <- image_animate(image_transparent(image_read(fname), 'white'), dispose="previous")
+image_write(a, fname)
+
+```
+
+## beta-VAE
+
+<smaller>
+- activations and traversal for the MNIST dataset: 2 layers network and only 3 (x2) cells in the latent layer
+</smaller>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,results='hide'}
+library(plot3D)
+library(animation)
+library(magick)
+
+m2 <- NULL
+for (i in seq(0.05, 0.95, 0.02)) {
+  d <- read.csv(paste("outputs/vae_mnist_manifold-4-", i, ".csv", sep=""), header=F)
+  m2  <- rbind(m2, d)
+}
+
+
+fname <- "beta-vae-manifold.gif"
+im <- to_images(m2)
+saveGIF(gif(im), interval=.5, movie.name=fname)
+
+a <- image_animate(image_transparent(image_read(fname), 'white'), dispose="previous")
+image_write(a, fname)
+
+```
+
+![](beta-vae-act.gif) ![](beta-vae-manifold.gif)
+
+
+
+
+## cVAEGAN
+
+<smaller>
+- Generative Adversarial Networks: great for generating plausible highly detailed data from the distribution, while autoencoders learn averaged representations<br>
+- cVAEGAN: semi-supervised, conditional learning <br>
+- combining multiple networks, some with common layers: encoder, decoder, classifier and discriminator<br>
+</smaller>
+
+<div class="notes"><smallest>
+- another approach to meaningful dimensionality reduction and extraction of disentangled factors was to go for semi-supervised models, to train a classifier and feed that classifier's output to the latent layer, together with the original input<br>
+- another development is combining a network with a classifier like described (called conditional-VAE, and which can be used on its own) with an adversarial network <br>
+- generative adversarial networks: the idea there is to have a network called generator that is producing outputs that look as close as possible to the data it sees, and another network called discriminator that tries to tell when the data is from the real distribution and when it's a fake generated by us. This arms race theoretically improves the results of both networks if they converge <br>
+- combining a cVAE with in this adversarial yields the conditional-VAEGAN, which is a network built from 4 sub-networks, some with common layers: an encoder, a decoder, a classifier and a discriminator<br>
+- references have a link to IFcVAEGAN, a promising extension which adds what they call information factorization on top of it (learning to generate a certain sample with or without some attribute) <br>
+- stability problems: combining the reconstruction loss with the adversarial loss is tricky, they might not converge. Poor results on highly variable datasets
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="80%"}
+library(ggplot2)
+library(gridExtra)
+
+act <- read.csv("outputs/cvaegan/weights/epoch_00018/cvaegan_mnist_activations-1.csv", header=F)
+
+p1 <- ggplot(act, aes(x=V1, y=V2, col=colors)) + geom_point(size=.3) + theme_l() + theme(aspect.ratio=1) + theme(legend.position = "none")
+p2 <- ggplot(act, aes(x=V1, y=V3, col=colors)) + geom_point(size=.3) + theme_l() + theme(aspect.ratio=1) + theme(legend.position = "none")
+p3 <- ggplot(act, aes(x=V2, y=V3, col=colors)) + geom_point(size=.3) + theme_l() + theme(aspect.ratio=1) + theme(legend.position = "none")
+
+grid.arrange(p1, p2, p3, ncol=3, respect=TRUE)
+```
+
+
+## cVAEGAN
+
+<smaller>
+- convolutional layers, only 3 cells in the latent layer
+</smaller>
+
+<div class="notes"><smallest>
+- top-right example converges (and is a beta-cVAEGAN) <br>
+- bottom-right example fails learning
+- activations for MNIST and on the right how the samples generated during few epochs look like, on top for the network that converged (a beta-cVAEGAN) and on bottom-right for one that it's not converging and fails to learn anything useful<br>
+- generative networks need a lot more epochs to be trained than regular networks, which have usable results in very few epochs. The results you've seen so far for the other autoencoders were obtained after 15 epochs
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,results='hide'}
+library(plot3D)
+library(animation)
+library(magick)
+
+fname <- 'cvaegan-act.gif'
+saveGIF({
+    for(i in seq(1, 360, 3)) {
+        dig <- floor(i/36)
+        f <- cls == dig
+        sc <- scatter3D(act$V1[f], act$V2[f], act$V3[f], pch=20, cex=.75, theta=i, ticktype="detailed", col=colors[f], xlab="x", ylab="y", zlab="z", colkey=F)
+        text(-0.4, -0.4, dig, cex=3, col="red")
+    }
+}, movie.name=fname, interval=0.2)
+
+a <- image_animate(image_transparent(image_read(fname), 'white'), dispose="previous")
+image_write(a, fname)
+
+
+```
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="80%",results='hide'}
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+library(rgl)
+library(png)
+library(plot3D)
+library(stringr)
+library(animation)
+library(magick)
+
+im <- NULL
+for (i in seq(1, 101, 5)) {
+  d <- image_read(paste("outputs/cvaegan/results/epoch_", str_pad(i, 4, pad="0"), "_batch_60000.png", sep=""))
+  d <- image_transparent(d, 'white')
+  im  <- c(im, image_scale(d, "250x250"))
+}
+
+img <- image_join(as.vector(im))
+animation <- image_animate(img, fps=5, dispose="previous")
+image_write(animation, "cvaegan-training.gif")
+
+im <- NULL
+for (i in seq(1, 101, 5)) {
+  d <- image_read(paste("outputs/cvaegan-4/results/epoch_", str_pad(i, 4, pad="0"), "_batch_60000.png", sep=""))
+  d <- image_transparent(d, 'white')
+  im  <- c(im, image_scale(d, "250x250"))
+}
+
+img <- image_join(as.vector(im))
+animation <- image_animate(img, fps=5, dispose="previous")
+image_write(animation, "cvaegan-training-4.gif")
+
+
+```
+
+<table><tr><td> 
+![](cvaegan-act.gif) 
+</td><td><table><tr><td> 
+![](cvaegan-training-4.gif)
+</td></tr><tr><td> 
+![](cvaegan-training.gif)
+</td></tr></table></td></tr></table>
+
+
+## Uncertainty Autoencoder (UAE)
+
+<smaller>
+- Uncertainty Autoencoders<footnote>https://arxiv.org/abs/1812.10539</footnote>: adding noise in the latent layer <br>
+- tries to find a sparse representation of the original data that best allow reconstruction, maximizing the mutual information between the data points and a noisy representation in the latent layer
+</smaller>
+
+<div class="notes"><smallest>
+- an interesting recent development which tries to find sparse representations of the original data that best allow reconstruction by maximizing the mutual information between the inputs and some noisy representations in the latent layer <br>
+- simple but efficient trick: at decoding time there's noise added in the latent layer. This encourages learning a meaningful representation, the autoencoder learns a generative model, although it does not have an explicit likelihood function <br>
+- interesting connection between UAE and compressed sensing. Side note, an extreme example of compressed sensing is the "single pixel camera": a camera with a single sensor can reproduce the original image given a small enough number of measurements if they are done by illuminating (or redirecting light using mirrors) different areas of the space <br>
+- optimizing an amortized variant of the variational lower bound <br>
+- interesting connection with PCA, they show techniques are equivalent in the presence of high noise <br>
+- UAE outperforms consistently PCA when training classifiers on top of PCA or UAE features
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="80%"}
+library(ggplot2)
+library(gridExtra)
+library(RColorBrewer)
+
+act <- read.csv("outputs/uae_mnist_activations-1.csv", header=F)
+cls <- read.csv("outputs/vae_mnist_classes-1.csv", header=F)
+c <- as.factor(cls$V1)
+
+colors <- brewer.pal(n=length(unique(c)), name="Spectral")[c]
+
+p1 <- ggplot(act, aes(x=V1, y=V2, col=colors)) + geom_point(size=.3) + theme_l() + theme(aspect.ratio=1) + theme(legend.position = "none")
+p2 <- ggplot(act, aes(x=V1, y=V3, col=colors)) + geom_point(size=.3) + theme_l() + theme(aspect.ratio=1) + theme(legend.position = "none")
+p3 <- ggplot(act, aes(x=V2, y=V3, col=colors)) + geom_point(size=.3) + theme_l() + theme(aspect.ratio=1) + theme(legend.position = "none")
+
+grid.arrange(p1, p2, p3, ncol=3, respect=TRUE)
+```
+
+
+## UAE
+
+<smaller>
+- data separation is already good, although reconstructions don't look so well<br>
+- sample network is small, embedding more knowledge in it can help: deeper networks, more neurons, convolutions
+</smaller>
+
+<div class="notes"><smallest>
+- 3D visualization of the activations for the MNIST digits, again, for a quite shallow network, no convolutions, 3 cells in the latent layer and intermediate layers of 100 neurons <br>
+- on the right image: several reconstructions, on the top row are the original input values, on the second line the reconstructions, and so on. An important visualization skipped for other autoencoders in this presentation. When analyzing results in real life it's recommended to always look at reconstructions<br>
+- the network needs more parameters and more training that variational autoencoders, sample was trained for 50 epochs
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,results='hide'}
+library(plot3D)
+library(animation)
+library(magick)
+
+fname <- 'uae-act.gif'
+saveGIF({
+    for(i in seq(1, 360, 3)) {
+        dig <- floor(i/36)
+        f <- cls == dig
+        sc <- scatter3D(act$V1[f], act$V2[f], act$V3[f], pch=20, cex=.75, theta=i, ticktype="detailed", col=colors[f], xlab="x", ylab="y", zlab="z", colkey=F)
+        text(-0.4, -0.4, dig, cex=3, col="red")
+    }
+}, movie.name=fname, interval=0.2)
+
+
+a <- image_animate(image_transparent(image_read(fname), 'white'), dispose="previous")
+image_write(a, fname)
+
+i <- image_transparent(image_read('outputs/uae/reconstructions.png'), 'white')
+image_write(image_resize(i, '450x450'), 'uae-rec.png')
+
+```
+
+<table><tr><td> 
+![](uae-act.gif)
+</td><td>
+![](uae-rec.png)
+</td></tr></table>
+
+
+## Recurrent autoencoders
+
+<smaller>
+- the input and the output is a sequence <br>
+- using special cells: GRU, LSTM, Nested LSTM <br>
+- long term dependencies problem: Bi-LSTM, attention. Maybe "attention is all you need".
+</smaller>
+
+<smallest>
+Data source: https://www.ncdc.noaa.gov/ghcn-daily-description
+</smallest>
+
+<div class="notes"><smallest>
+- problems: longer time dependencies are hard to be learned, due to gradient propagation problems. Things vary a lot, after few hundred or even tens of samples is can be hard to learn dependencies. More training epochs needed <br>
+- the solutions people deploy for long term dependencies are inherited from natural language processing: Bi-LSTMs, which feed the same samples to two networks, one "as usual" and one in reverse order and combining their latent layers, or an attention mechanism <br>
+- attention is just another network, usually a shallow fully connected layer, which learns what samples from the recent past to feed to the recurrent network, and this "context vector" is passed to it together with the input <br>
+- "Attention is all you need" syntagm from an article published a year ago: discarded recurrent units entirely and showed (for a natural language model) that a simple attention model can outperform a recurrent network <br>
+- takeout: if you know something about how your time dependency behaves, it might be the case that you don't need a recurrent autoencoder: for example if you a process where the time dependency is decaying exponentially, rather than feed fixed samples to a recurrent network, it might be better to produce a normalized unevenly spaced vector of values, with the window increasing as you go in the past, and feed it as input to a non-recurrent autoencoder <br>
+- example is for a dataset with daily temperatures from 20 US cities. Charts show how the temperatures look like overall, for a certain city or across cities
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="75%"}
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+library(reshape2)
+library(lubridate)
+library(maps)
+
+c <- read.csv("daily-weather-in-20-us-cities.csv")
+c <- c[complete.cases(c), ]
+
+c$Date <- as.Date(c$Date)
+dx <- melt(c, id.vars="Date")
+colnames(dx) <- c("Date", "City", "MaxTemperature")
+write.csv(c, "temperatures.csv", row.names=F)
+
+pc <- prcomp(c[,-1], center=F, rank.=3)
+reconstructed <- cbind(c$Date, as.data.frame(pc$x %*% t(pc$rotation)))
+colnames(reconstructed) <- colnames(c)
+
+cities <- us.cities[gsub("\\s*\\w*$", "", us.cities$name) %in% gsub("\\.", " ", colnames(c)),]
+cities <- cities[!(cities$name %in% c("Columbus GA", "Columbus IN", "Jacksonville NC")),]
+cities$City <- colnames(c)[2:ncol(c)]
+m <- merge(dx, cities, by=c("City"))
+
+c$Month <- month(c$Date, label=T)
+
+
+p1 <- ggplot(dx, aes(x=Date, y=MaxTemperature, col=City)) + geom_line(size=.2, alpha=.5) + theme() + theme_l() + theme(legend.position="none")
+
+p2 <- ggplot(c, aes(x=Month, y=Chicago)) + geom_boxplot(fill="#E1F5FE", alpha=.5, outlier.size=.3, outlier.alpha=.2) + theme_l() + theme(legend.position="none")
+
+p3 <- ggplot(m, aes(x=City, y=MaxTemperature)) + geom_boxplot(fill="#E1F5FE", alpha=.5, outlier.size=.3, outlier.alpha=.2) + theme_l() + theme(legend.position="none", axis.text.x=element_blank())
+
+grid.arrange(p1, p2, p3, ncol=2, respect=TRUE, layout_matrix=rbind(c(1, 1, 1, 1), c(2, 2, 3, 3)))
+
+```
+
+
+## Recurrent autoencoders
+
+<div class="notes"><smallest>
+- 3 cells recurrent autoencoder with LSTM cells using a window of 30 days <br>
+- interestingly the activation values got spread along the axis, which means the factors are rarely activating together (no regularization was added) <br>
+- plotted the activations of each cell conditional on the month given that our samples have a relation between them (time)<br>
+- a type of chart always recommended: when you know something about the structure of your data, visualize how the activations look like when compared to what you already know about the data <br>
+- what this LSTM of only 3 cells seems to have trained is to activate depending on the season
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="90%"}
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+library(lubridate)
+
+a <- read.csv("outputs/lstm_temperatures_activations-test.csv", header=F)
+testc <- tail(c, nrow(a))
+colors <- as.factor(month(testc$Date))
+
+p1 <- ggplot(a, aes(x=a$V1, y=a$V2, col=colors)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 1 vs 2") + xlab("") + ylab("")
+
+p2 <- ggplot(a, aes(x=a$V1, y=a$V3, col=colors)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 1 vs 3") + xlab("") + ylab("")
+
+p3 <- ggplot(a, aes(x=a$V2, y=a$V3, col=colors)) + geom_point(size=1) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 2 vs 3") + xlab("") + ylab("")
+
+dz1 <- data.frame(Month=month(testc$Date, label=T), V1=a$V1)
+p4 <- ggplot(dz1, aes(x=Month, y=V1)) + geom_boxplot(fill="#E1F5FE", alpha=.5, outlier.size=.3, outlier.alpha=.2) + theme_l() + theme(aspect.ratio=1, legend.position="none", axis.text.x=element_text(angle=55))
+
+dz2 <- data.frame(Month=month(testc$Date, label=T), V2=a$V2)
+p5 <- ggplot(dz2, aes(x=Month, y=V2)) + geom_boxplot(fill="#E1F5FE", alpha=.5, outlier.size=.3, outlier.alpha=.2) + theme_l() + theme(aspect.ratio=1, legend.position="none", axis.text.x=element_text(angle=55))
+
+dz3 <- data.frame(Month=month(testc$Date, label=T), V3=a$V3)
+p6 <- ggplot(dz3, aes(x=Month, y=V3)) + geom_boxplot(fill="#E1F5FE", alpha=.5, outlier.size=.3, outlier.alpha=.2) + theme_l() + theme(aspect.ratio=1, legend.position="none", axis.text.x=element_text(angle=55))
+
+grid.arrange(p1, p2, p3, p4, p5, p6, ncol=3, respect=TRUE)
+
+```
+
+## PCA again
+
+
+<div class="notes"><smallest>
+- finally, in order not to get overexcited with autoencoders, "just PCA" shown on the temperatures dataset <br>
+- top row: the relation between features, bottom row: the feature values plotted against "month of year" <br>
+- PCA also learned the seasons in two of the components. Not sure what's on the third, because only its variability seems to be related to the season, probably it learned something related to cities altitude or latitude <br>
+- the takeout is that maybe you don't have to go to autoencoders, PCA can help too <br>
+- actually for such time series you'd probably better go with Holt-Winters, Dynamic Linear Models or autoregressive models
+</smallest></div>
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE,cache=TRUE,out.width="90%"}
+library(ggplot2)
+library(ggpubr)
+library(gridExtra)
+
+dy <- melt(reconstructed, id.vars="Date")
+colnames(dy) <- c("Date", "City", "MaxTemperature")
+colors <- as.factor(month(c$Date))
+
+
+p1 <- ggplot(c, aes(x=pc$x[,1], y=pc$x[,2], col=colors)) + geom_point(size=.5, alpha=.5) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 1 vs 2") + xlab("") + ylab("")
+
+p2 <- ggplot(c, aes(x=pc$x[,1], y=pc$x[,3], col=colors)) + geom_point(size=.5, alpha=.5) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 1 vs 3") + xlab("") + ylab("")
+
+p3 <- ggplot(c, aes(x=pc$x[,2], y=pc$x[,3], col=colors)) + geom_point(size=.5, alpha=.5) + theme_l() + theme(aspect.ratio=1, legend.position="none") + labs(title="Axis 2 vs 3") + xlab("") + ylab("")
+
+
+dz1 <- data.frame(Month=month(c$Date, label=T), PC1=pc$x[,1])
+p4 <- ggplot(dz1, aes(x=Month, y=PC1)) + geom_boxplot(fill="#E1F5FE", alpha=.5, outlier.size=.3, outlier.alpha=.2) + theme_l() + theme(aspect.ratio=1, legend.position="none", axis.text.x=element_text(angle=55))
+
+dz2 <- data.frame(Month=month(c$Date, label=T), PC2=pc$x[,2])
+p5 <- ggplot(dz2, aes(x=Month, y=PC2)) + geom_boxplot(fill="#E1F5FE", alpha=.5, outlier.size=.3, outlier.alpha=.2) + theme_l() + theme(aspect.ratio=1, legend.position="none", axis.text.x=element_text(angle=55))
+
+dz3 <- data.frame(Month=month(c$Date, label=T), PC3=pc$x[,3])
+p6 <- ggplot(dz3, aes(x=Month, y=PC3)) + geom_boxplot(fill="#E1F5FE", alpha=.5, outlier.size=.3, outlier.alpha=.2) + theme_l() + theme(aspect.ratio=1, legend.position="none", axis.text.x=element_text(angle=55))
+
+grid.arrange(p1, p2, p3, p4, p5, p6, ncol=3, respect=TRUE)
+```
+
+
+
+## Many more
+
+<smaller>
+- Nonnegative Matrix Factorization (NMF) <br>
+- Neighbourhood Components Analysis (NCA)<footnote>http://www.cs.toronto.edu/~fritz/absps/nca.pdf</footnote> <br>
+- Maximum Variance Unfolding (MVU)<footnote>http://cseweb.ucsd.edu/~saul/papers/nldr_aaai06.pdf</footnote> <br>
+- Generative Topographic Mapping<footnote>https://www.microsoft.com/en-us/research/wp-content/uploads/1998/01/bishop-gtm-ncomp-98.pdf</footnote> <br>
+- Diffusion Maps<footnote>http://inside.mines.edu/fs_home/whereman/talks/delaPorte-Herbst-Hereman-vanderWalt-DiffusionMaps-PRASA2008.pdf</footnote> <br>
+- Twin Kernel Embedding (TKE)<footnote>https://www.researchgate.net/publication/5289090</footnote> <br>
+</smaller>
+
+## Many more
+
+<smaller>
+- Deep Belief Networks and Deep Bolzmann Machines as autoencoders alternative <br>
+- Conditional Subspace VAE (CSVAE)<footnote>https://arxiv.org/abs/1812.06190</footnote> <br>
+- Vector Quantised VAE (VQ-VAE)<footnote>https://arxiv.org/abs/1711.00937</footnote> <br>
+- Total Correlation VAE (beta-TCVAE)<footnote>https://arxiv.org/abs/1802.04942</footnote> <br>
+- Independent Subspace Analysis VAE (ISA-VAE)<footnote>https://openreview.net/forum?id=rJl_NhR9K7</footnote> <br>
+- Factorized Action VAE (FAVAE)<footnote>https://arxiv.org/abs/1902.08341</footnote> <br>
+- FactorVAE<footnote>https://arxiv.org/abs/1802.05983</footnote> <br>
+- oi-VAE<footnote>https://arxiv.org/abs/1802.06765</footnote> <br>
+- Auto-Classifier-Encoder (ACE)<footnote>https://arxiv.org/abs/1508.06585</footnote> <br>
+- InfoGAN<footnote>https://arxiv.org/abs/1606.03657</footnote> <br>
+- Adversarial Information Factorization (IFcVAEGAN)<footnote>https://arxiv.org/abs/1711.05175</footnote> <br>
+</smaller>
