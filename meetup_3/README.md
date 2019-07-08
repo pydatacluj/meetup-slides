@@ -1,4 +1,4 @@
-# PyData Cluj-Napoca meetup #2
+# PyData Cluj-Napoca meetup #3
 
 ## "Using Tensorflow for Optical Character Recognition Description",
  by Bogdan Gliga
