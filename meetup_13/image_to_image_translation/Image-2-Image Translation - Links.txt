@@ -1,0 +1,45 @@
+NavInfo:
+https://www.navinfo.eu/artificial-intelligence.html	
+
+Intuitively Understanding Variational Autoencoders?
+https://towardsdatascience.com/intuitively-understanding-variational-autoencoders-1bfe67eb5daf
+
+What The Heck Are VAE-GANs?
+https://towardsdatascience.com/what-the-heck-are-vae-gans-17b86023588a
+
+Image-to-Image Translation SOTA
+https://paperswithcode.com/task/image-to-image-translation
+
+Official Tensorflow implementation of U-GAT-IT: Unsupervised Generative Attentional Networks with Adaptive Layer-Instance Normalization for Image-to-Image Translation (ICLR 2020) 
+https://github.com/taki0112/UGATIT	
+
+Telegram bot: https://t.me/selfie2animebot
+
+Hands-on Tutorial:
+https://devopstar.com/2019/10/14/selfie2something-building-a-ugatit-model
+
+High-Resolution Daytime Translation Without Domain Labels
+https://saic-mdal.github.io/HiDT/
+https://www.youtube.com/watch?v=EWKAgwgqXB4&t=233s
+
+Invertible Conditional GANs for image editing (paper behind FaceApp Android app)
+https://github.com/Guim3/IcGAN
+
+Vid2Vid:
+https://github.com/NVIDIA/vid2vid
+
+CycleGAN and pix2pix in PyTorch
+https://github.com/junyanz/pytorch-CycleGAN-and-pix2pix
+
+Other:
+
+GAN PlayLab
+https://poloclub.github.io/ganlab/
+
+Recommended Course - check this lesson:
+https://www.youtube.com/watch?v=yFBFl1cLYx8&list=PLtBw6njQRU-rwp5__7C0oIVt26ZgjG9NI&index=15
+http://introtodeeplearning.com/	
+
+GAN — Spectral Normalization
+https://medium.com/@jonathan_hui/gan-spectral-normalization-893b6a4e8f53
+
